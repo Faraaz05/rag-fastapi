@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile
 from fastapi import File as FileUpload
+from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -14,7 +15,7 @@ from app.core.auth import (
     verify_password,
 )
 from app.core.config import settings
-from app.models import Base, User, Project, project_members, File, FileStatus
+from app.models import Base, User, Project, project_members, File, FileStatus, ChatMessage
 from app.schemas import (
     UserCreate,
     UserResponse,
@@ -29,11 +30,13 @@ from app.schemas import (
     TranscriptResponse,
     QueryRequest,
     QueryResponse,
+    ChatMessageRequest,
+    ChatMessageResponse,
 )
 from app.services.storage import storage_service
 from app.services.queue import queue_service
 from app.services.transcript import process_transcript_file
-from app.services.rag import quick_query
+from app.services.rag import quick_query, get_standalone_question, streaming_chat, query_with_filter
 
 # Database setup
 engine = create_engine(settings.DATABASE_URL, connect_args={"check_same_thread": False})
@@ -500,6 +503,213 @@ def query_project(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing query: {str(e)}"
         )
+
+
+@app.post("/projects/{project_id}/chat/{session_id}")
+async def chat_with_project(
+    project_id: int,
+    session_id: str,
+    chat_request: ChatMessageRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    History-aware streaming chat with the project's RAG system.
+    Uses conversation history to contextualize questions.
+    Streams the response with Server-Sent Events.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Validate filter parameter
+    if chat_request.filter not in ["unified", "document", "transcript"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid filter. Must be 'unified', 'document', or 'transcript'"
+        )
+    
+    try:
+        # Step 1: Fetch last 5 messages from database
+        history_messages = db.query(ChatMessage).filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.project_id == project_id
+        ).order_by(ChatMessage.timestamp.desc()).limit(5).all()
+        
+        # Reverse to get chronological order
+        history_messages.reverse()
+        
+        # Convert to dict format for rewriter
+        history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in history_messages
+        ]
+        
+        # Step 2: Save user message to database
+        user_message = ChatMessage(
+            session_id=session_id,
+            project_id=project_id,
+            role="user",
+            content=chat_request.question
+        )
+        db.add(user_message)
+        db.commit()
+        
+        # Step 3: Generate standalone question using rewriter
+        standalone_question = get_standalone_question(chat_request.question, history)
+        print(f"🔄 Rewritten question: {standalone_question}")
+        
+        # Step 4: Retrieve chunks using the standalone question
+        retrieved_chunks = query_with_filter(
+            question=standalone_question,
+            project_id=project_id,
+            top_k=chat_request.top_k,
+            filter_type=chat_request.filter
+        )
+        
+        if not retrieved_chunks:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No relevant information found in the database"
+            )
+        
+        # Build chunks metadata (same as in generate_answer)
+        chunks_metadata = {}
+        for i, chunk in enumerate(retrieved_chunks):
+            chunk_id = i + 1
+            source_type = chunk.metadata.get("source_type", "document")
+            
+            if source_type == "meeting_transcript":
+                import json as json_lib
+                speakers_json = chunk.metadata.get("speakers_in_chunk", "[]")
+                speakers = json_lib.loads(speakers_json) if isinstance(speakers_json, str) else speakers_json
+                
+                chunks_metadata[chunk_id] = {
+                    "source_type": "meeting_transcript",
+                    "meeting_name": chunk.metadata.get("meeting_name"),
+                    "meeting_date": chunk.metadata.get("meeting_date"),
+                    "start_time": chunk.metadata.get("start_time"),
+                    "end_time": chunk.metadata.get("end_time"),
+                    "speakers": speakers
+                }
+            else:
+                import json as json_lib
+                positions_str = chunk.metadata.get("positions", "[]")
+                positions = json_lib.loads(positions_str) if isinstance(positions_str, str) else positions_str
+                
+                chunks_metadata[chunk_id] = {
+                    "source_type": "document",
+                    "page": chunk.metadata.get("page_number", "N/A"),
+                    "document": chunk.metadata.get("document_name", "document.pdf"),
+                    "positions": positions
+                }
+        
+        # Step 5: Stream the response
+        async def event_generator():
+            full_answer = ""
+            async for event in streaming_chat(
+                question=chat_request.question,
+                history=history,
+                chunks=retrieved_chunks,
+                chunks_metadata=chunks_metadata
+            ):
+                # Collect full answer from text events
+                if 'data:' in event:
+                    try:
+                        import json as json_lib
+                        data_str = event.replace('data: ', '').strip()
+                        if data_str and data_str != '[DONE]':
+                            data = json_lib.loads(data_str)
+                            if data.get('type') == 'text':
+                                full_answer += data.get('content', '')
+                    except:
+                        pass
+                
+                yield event
+            
+            # Step 6: Save assistant response to database after streaming completes
+            if full_answer:
+                assistant_message = ChatMessage(
+                    session_id=session_id,
+                    project_id=project_id,
+                    role="assistant",
+                    content=full_answer
+                )
+                db.add(assistant_message)
+                db.commit()
+        
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing chat: {str(e)}"
+        )
+
+
+@app.get("/projects/{project_id}/chat/{session_id}/history", response_model=list[ChatMessageResponse])
+def get_chat_history(
+    project_id: int,
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db),
+    limit: int = 50
+):
+    """
+    Retrieve chat history for a specific session.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Fetch chat messages
+    messages = db.query(ChatMessage).filter(
+        ChatMessage.session_id == session_id,
+        ChatMessage.project_id == project_id
+    ).order_by(ChatMessage.timestamp.asc()).limit(limit).all()
+    
+    return messages
 
 
 @app.get("/")

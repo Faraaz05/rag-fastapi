@@ -72,3 +72,17 @@ class File(Base):
 
     # Relationship to project
     project = relationship('Project', back_populates='files')
+
+
+class ChatMessage(Base):
+    __tablename__ = 'chat_messages'
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, index=True, nullable=False)
+    project_id = Column(Integer, ForeignKey('projects.id'), nullable=False)
+    role = Column(String, nullable=False)  # 'user' or 'assistant'
+    content = Column(String, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    # Relationship to project
+    project = relationship('Project')

@@ -43,6 +43,8 @@ data/
 data/raw/
 data/processed/
 docs/
+./chroma_data
+./redis_data
 
 # ChromaDB
 unified_chroma_db/

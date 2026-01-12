@@ -123,3 +123,20 @@ class SourceMetadata(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceMetadata]
+
+
+# Chat Schemas
+class ChatMessageRequest(BaseModel):
+    question: str
+    filter: str = "unified"  # Options: "unified", "document", "transcript"
+    top_k: int = 5
+
+
+class ChatMessageResponse(BaseModel):
+    session_id: str
+    role: str
+    content: str
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True

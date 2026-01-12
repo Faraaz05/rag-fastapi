@@ -1,0 +1,21 @@
+services:
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./chroma_data:/data  # Persists your vector DB to your local machine
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: always
+
+  redis:
+    image: redis:latest
+    container_name: redis_queue
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data   # Persists your queue tasks if Redis restarts
+    restart: always
