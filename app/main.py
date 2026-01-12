@@ -25,9 +25,12 @@ from app.schemas import (
     MemberResponse,
     UploadResponse,
     FileStatusResponse,
+    TranscriptUpload,
+    TranscriptResponse,
 )
 from app.services.storage import storage_service
 from app.services.queue import queue_service
+from app.services.transcript import process_transcript_file
 
 # Database setup
 engine = create_engine(settings.DATABASE_URL, connect_args={"check_same_thread": False})
@@ -317,6 +320,122 @@ def get_file_status(
         )
     
     return db_file
+
+
+@app.post("/projects/{project_id}/transcripts", response_model=TranscriptResponse)
+async def upload_transcript(
+    project_id: int,
+    file: UploadFile = FileUpload(...),
+    meeting_name: str = None,
+    meeting_date: str = None,
+    turns_per_chunk: int = 8,
+    overlap: int = 3,
+    current_user: Annotated[User, Depends(is_project_owner)] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Upload and process a VTT transcript file.
+    Instantly processes the transcript and stores in ChromaDB.
+    Only project owners can upload transcripts.
+    """
+    # Validate file type
+    if not file.filename.endswith(('.vtt', '.txt')):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .vtt or .txt files are allowed"
+        )
+    
+    # Validate required parameters
+    if not meeting_name or not meeting_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="meeting_name and meeting_date are required"
+        )
+    
+    # Verify project exists
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    try:
+        # Read VTT content
+        vtt_content = (await file.read()).decode('utf-8')
+        file_size = len(vtt_content.encode('utf-8'))
+        
+        # Generate unique file ID
+        import uuid
+        file_id = str(uuid.uuid4())
+        
+        # Create File record
+        db_file = File(
+            file_id=file_id,
+            original_filename=file.filename,
+            file_path=f"transcript_{meeting_name}_{meeting_date}",
+            project_id=project_id,
+            size=file_size,
+            status=FileStatus.PARTITIONING  # Set initial status
+        )
+        db.add(db_file)
+        db.commit()
+        db.refresh(db_file)
+        
+        # Process transcript immediately (in-process)
+        result = process_transcript_file(
+            vtt_content=vtt_content,
+            meeting_name=meeting_name,
+            meeting_date=meeting_date,
+            project_id=project_id,
+            project_name=project.name,
+            turns_per_chunk=turns_per_chunk,
+            overlap=overlap
+        )
+        
+        if result["success"]:
+            # Update file status to COMPLETED
+            db_file.status = FileStatus.COMPLETED
+            db_file.processed_path = result["collection_name"]
+            db.commit()
+            
+            return TranscriptResponse(
+                message="Transcript processed and stored successfully",
+                file_id=file_id,
+                meeting_name=result["meeting_name"],
+                meeting_date=result["meeting_date"],
+                chunks_count=result["chunks_count"],
+                speakers=result["speakers"],
+                collection_name=result["collection_name"],
+                status=FileStatus.COMPLETED.value
+            )
+        else:
+            # Update file status to FAILED
+            db_file.status = FileStatus.FAILED
+            db_file.error_message = result.get("error", "Unknown error")
+            db.commit()
+            
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Failed to process transcript")
+            )
+    
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is not valid UTF-8 encoded text"
+        )
+    except Exception as e:
+        # Update file status to FAILED if exists
+        if 'db_file' in locals():
+            db_file.status = FileStatus.FAILED
+            db_file.error_message = str(e)
+            db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing transcript: {str(e)}"
+        )
 
 
 @app.get("/")

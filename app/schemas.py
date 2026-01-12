@@ -77,3 +77,22 @@ class FileStatusResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Transcript Schemas
+class TranscriptUpload(BaseModel):
+    meeting_name: str
+    meeting_date: str  # YYYY-MM-DD format
+    turns_per_chunk: int = 8
+    overlap: int = 3
+
+
+class TranscriptResponse(BaseModel):
+    message: str
+    file_id: str
+    meeting_name: str
+    meeting_date: str
+    chunks_count: int
+    speakers: list[str]
+    collection_name: str
+    status: str
