@@ -1,0 +1,79 @@
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
+
+
+# User Schemas
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+# Token Schemas
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: str | None = None
+
+
+# Project Schemas
+class ProjectCreate(BaseModel):
+    name: str
+
+
+class ProjectResponse(BaseModel):
+    id: int
+    name: str
+    owner_id: int
+
+    class Config:
+        from_attributes = True
+
+
+# Member Schemas
+class MemberAdd(BaseModel):
+    username: str
+
+
+class MemberResponse(BaseModel):
+    id: int
+    username: str
+
+    class Config:
+        from_attributes = True
+
+
+# Upload Schemas
+class UploadResponse(BaseModel):
+    message: str
+    file_id: str
+    original_filename: str
+    project_id: int
+    size: int
+    status: str
+
+
+# File Status Schemas
+class FileStatusResponse(BaseModel):
+    file_id: str
+    original_filename: str
+    status: str
+    error_message: Optional[str] = None
+    processed_path: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

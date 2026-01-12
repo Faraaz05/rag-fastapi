@@ -1,0 +1,27 @@
+# Worker Dependencies
+# Unstructured for PDF processing
+unstructured[pdf]>=0.10.0
+python-magic>=0.4.27
+
+# LangChain and AI
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-groq>=0.0.1
+langchain-google-genai>=0.0.5
+langchain-chroma>=0.1.0
+
+# ChromaDB
+chromadb>=0.4.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# Redis for messaging
+redis>=5.0.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Utilities
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
