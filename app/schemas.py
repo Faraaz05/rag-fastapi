@@ -96,3 +96,30 @@ class TranscriptResponse(BaseModel):
     speakers: list[str]
     collection_name: str
     status: str
+
+
+# Query/RAG Schemas
+class QueryRequest(BaseModel):
+    question: str
+    filter: str = "unified"  # Options: "unified", "document", "transcript"
+    top_k: int = 5
+
+
+class SourceMetadata(BaseModel):
+    chunk_id: str
+    source_type: str  # "document" or "transcript"
+    # Document-specific fields
+    document_name: Optional[str] = None
+    page_number: Optional[int] = None  # Changed to int to match ChromaDB metadata
+    positions: Optional[list] = None
+    # Transcript-specific fields
+    meeting_name: Optional[str] = None
+    meeting_date: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    speakers: Optional[list[str]] = None
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    sources: list[SourceMetadata]

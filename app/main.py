@@ -27,10 +27,13 @@ from app.schemas import (
     FileStatusResponse,
     TranscriptUpload,
     TranscriptResponse,
+    QueryRequest,
+    QueryResponse,
 )
 from app.services.storage import storage_service
 from app.services.queue import queue_service
 from app.services.transcript import process_transcript_file
+from app.services.rag import quick_query
 
 # Database setup
 engine = create_engine(settings.DATABASE_URL, connect_args={"check_same_thread": False})
@@ -435,6 +438,67 @@ async def upload_transcript(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing transcript: {str(e)}"
+        )
+
+
+@app.post("/projects/{project_id}/query", response_model=QueryResponse)
+def query_project(
+    project_id: int,
+    query_request: QueryRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Query the project's RAG system with source filtering.
+    Accessible by project owners and members.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Validate filter parameter
+    if query_request.filter not in ["unified", "document", "transcript"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid filter. Must be 'unified', 'document', or 'transcript'"
+        )
+    
+    try:
+        # Execute RAG query
+        result = quick_query(
+            question=query_request.question,
+            project_id=project_id,
+            filter_type=query_request.filter,
+            top_k=query_request.top_k
+        )
+        
+        return QueryResponse(
+            answer=result["answer"],
+            sources=result["sources"]
+        )
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing query: {str(e)}"
         )
 
 
