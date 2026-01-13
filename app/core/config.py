@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./test.db"
     REDIS_URL: str = "redis://localhost:6379/0"
     UPLOAD_DIR: str = "./data/raw"
+    PROCESSED_DIR: str = "./data/processed"
     
     # ChromaDB Settings
     CHROMA_HOST: str = "localhost"

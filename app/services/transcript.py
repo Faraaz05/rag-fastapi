@@ -126,6 +126,36 @@ Transcript:
     return chunks
 
 
+def format_transcript_for_export(turns: List[Dict], meeting_name: str, meeting_date: str) -> Dict:
+    """
+    Format parsed transcript turns into JSON structure for frontend rendering.
+    
+    Args:
+        turns: List of parsed speaker turns
+        meeting_name: Name of the meeting
+        meeting_date: Date of the meeting
+        
+    Returns:
+        Dictionary with meeting metadata and formatted turns
+    """
+    speakers = list(set(turn['speaker'] for turn in turns))
+    
+    return {
+        "meeting_name": meeting_name,
+        "meeting_date": meeting_date,
+        "total_turns": len(turns),
+        "speakers": speakers,
+        "turns": [
+            {
+                "timestamp": turn['timestamp'],
+                "speaker": turn['speaker'],
+                "content": turn['text']
+            }
+            for turn in turns
+        ]
+    }
+
+
 def store_transcript_chunks(
     chunks: List[Dict],
     project_id: int,

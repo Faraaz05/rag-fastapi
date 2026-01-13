@@ -5,6 +5,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, UploadFile
 from fastapi import File as FileUpload
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -50,6 +51,15 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Auth & Project API")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # Database dependency
@@ -484,7 +494,7 @@ def list_project_files(
     return files
 
 
-@app.get("/projects/{project_id}/files/{file_id}", response_model=FileStatusResponse)
+@app.get("/projects/{project_id}/files/{file_id}")
 def get_file(
     project_id: int,
     file_id: str,
@@ -492,7 +502,7 @@ def get_file(
     db: Session = Depends(get_db)
 ):
     """
-    Get file metadata by file ID, including file path for download.
+    Get file by ID. Returns metadata for documents, JSON content for transcripts.
     Accessible by project owner and members.
     """
     # Check if user has access to the project
@@ -529,6 +539,31 @@ def get_file(
             detail="File not found"
         )
     
+    # Check if this is a transcript (has processed_path ending in .json)
+    if db_file.processed_path and db_file.processed_path.endswith('.json'):
+        # Return JSON content for transcripts
+        try:
+            import json
+            with open(db_file.processed_path, 'r', encoding='utf-8') as f:
+                transcript_data = json.load(f)
+            
+            return {
+                "file_id": db_file.file_id,
+                "original_filename": db_file.original_filename,
+                "project_id": db_file.project_id,
+                "size": db_file.size,
+                "status": db_file.status.value,
+                "created_at": db_file.created_at,
+                "type": "transcript",
+                "content": transcript_data
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error reading transcript file: {str(e)}"
+            )
+    
+    # Return metadata for documents
     return db_file
 
 
@@ -556,7 +591,7 @@ def delete_file(
         )
     
     try:
-        # Step 1: Delete chunks from ChromaDB using document_name filter
+        # Step 1: Delete chunks from ChromaDB
         import chromadb
         
         chroma_client = chromadb.HttpClient(
@@ -569,16 +604,34 @@ def delete_file(
         try:
             collection = chroma_client.get_collection(name=collection_name)
             
-            # Get all chunks with this document_name
-            results = collection.get(
-                where={"document_name": db_file.original_filename},
-                include=[]
-            )
+            # Check if this is a transcript or document
+            is_transcript = db_file.processed_path and db_file.processed_path.endswith('.json')
+            
+            if is_transcript:
+                # For transcripts, filter by meeting_name (derived from file_path)
+                # file_path format: "transcript_{meeting_name}_{meeting_date}"
+                meeting_info = db_file.file_path.replace("transcript_", "").rsplit("_", 1)
+                if len(meeting_info) > 0:
+                    meeting_name = meeting_info[0]
+                    results = collection.get(
+                        where={"meeting_name": meeting_name},
+                        include=[]
+                    )
+                else:
+                    results = {'ids': []}
+            else:
+                # For documents, filter by document_name
+                results = collection.get(
+                    where={"document_name": db_file.original_filename},
+                    include=[]
+                )
             
             # Delete chunks if any found
             if results['ids']:
                 collection.delete(ids=results['ids'])
                 print(f"🗑️  Deleted {len(results['ids'])} chunks from ChromaDB for {db_file.original_filename}")
+            else:
+                print(f"⚠️  No chunks found in ChromaDB for {db_file.original_filename}")
         except Exception as e:
             print(f"⚠️  ChromaDB deletion warning: {e}")
             # Continue even if ChromaDB deletion fails
@@ -666,6 +719,18 @@ async def upload_transcript(
         db.commit()
         db.refresh(db_file)
         
+        # Parse transcript for JSON export
+        from app.services.transcript import parse_vtt_to_turns, format_transcript_for_export
+        turns = parse_vtt_to_turns(vtt_content)
+        transcript_json = format_transcript_for_export(turns, meeting_name, meeting_date)
+        
+        # Save JSON to storage
+        json_path = storage_service.save_json_transcript(
+            project_id=project_id,
+            file_id=file_id,
+            transcript_data=transcript_json
+        )
+        
         # Process transcript immediately (in-process)
         result = process_transcript_file(
             vtt_content=vtt_content,
@@ -678,9 +743,9 @@ async def upload_transcript(
         )
         
         if result["success"]:
-            # Update file status to COMPLETED
+            # Update file status to COMPLETED and save JSON path
             db_file.status = FileStatus.COMPLETED
-            db_file.processed_path = result["collection_name"]
+            db_file.processed_path = json_path  # Store JSON path
             db.commit()
             
             return TranscriptResponse(

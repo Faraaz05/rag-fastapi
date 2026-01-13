@@ -1,0 +1,3548 @@
+{
+
+  "openapi": "3.1.0",
+
+  "info": {
+
+    "title": "Auth & Project API",
+
+    "version": "0.1.0"
+
+  },
+
+  "paths": {
+
+    "/auth/register": {
+
+      "post": {
+
+        "summary": "Register",
+
+        "description": "Register a new user.",
+
+        "operationId": "register_auth_register_post",
+
+        "requestBody": {
+
+          "content": {
+
+            "application/json": {
+
+              "schema": {
+
+                "$ref": "#/components/schemas/UserCreate"
+
+              }
+
+            }
+
+          },
+
+          "required": true
+
+        },
+
+        "responses": {
+
+          "201": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/UserResponse"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/auth/token": {
+
+      "post": {
+
+        "summary": "Login",
+
+        "description": "Login to receive a JWT token (OAuth2 compatible).",
+
+        "operationId": "login_auth_token_post",
+
+        "requestBody": {
+
+          "content": {
+
+            "application/x-www-form-urlencoded": {
+
+              "schema": {
+
+                "$ref": "#/components/schemas/Body_login_auth_token_post"
+
+              }
+
+            }
+
+          },
+
+          "required": true
+
+        },
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/Token"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects": {
+
+      "get": {
+
+        "summary": "List User Projects",
+
+        "description": "List all projects for the current user with their role (owner or member).",
+
+        "operationId": "list_user_projects_projects_get",
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "items": {
+
+                    "$ref": "#/components/schemas/ProjectWithRoleResponse"
+
+                  },
+
+                  "type": "array",
+
+                  "title": "Response List User Projects Projects Get"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        },
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ]
+
+      }
+
+    },
+
+    "/projects/": {
+
+      "post": {
+
+        "summary": "Create Project",
+
+        "description": "Create a new project. The current user becomes the owner.",
+
+        "operationId": "create_project_projects__post",
+
+        "requestBody": {
+
+          "content": {
+
+            "application/json": {
+
+              "schema": {
+
+                "$ref": "#/components/schemas/ProjectCreate"
+
+              }
+
+            }
+
+          },
+
+          "required": true
+
+        },
+
+        "responses": {
+
+          "201": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/ProjectResponse"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        },
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ]
+
+      }
+
+    },
+
+    "/projects/{project_id}/members": {
+
+      "post": {
+
+        "summary": "Add Member To Project",
+
+        "description": "Add a member to a project.\nOnly the project owner can add members.",
+
+        "operationId": "add_member_to_project_projects__project_id__members_post",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          }
+
+        ],
+
+        "requestBody": {
+
+          "required": true,
+
+          "content": {
+
+            "application/json": {
+
+              "schema": {
+
+                "$ref": "#/components/schemas/MemberAdd"
+
+              }
+
+            }
+
+          }
+
+        },
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/MemberResponse"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      },
+
+      "get": {
+
+        "summary": "List Project Members",
+
+        "description": "List all members of a project with their roles.\nOnly the project owner can view members.",
+
+        "operationId": "list_project_members_projects__project_id__members_get",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          }
+
+        ],
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "type": "array",
+
+                  "items": {
+
+                    "$ref": "#/components/schemas/MemberWithRoleResponse"
+
+                  },
+
+                  "title": "Response List Project Members Projects  Project Id  Members Get"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/members/{user_id}": {
+
+      "delete": {
+
+        "summary": "Remove Member From Project",
+
+        "description": "Remove a member from a project.\nOnly the project owner can remove members.\nCannot remove the owner themselves.",
+
+        "operationId": "remove_member_from_project_projects__project_id__members__user_id__delete",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          },
+
+          {
+
+            "name": "user_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "User Id"
+
+            }
+
+          }
+
+        ],
+
+        "responses": {
+
+          "204": {
+
+            "description": "Successful Response"
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/upload": {
+
+      "post": {
+
+        "summary": "Upload File",
+
+        "description": "Upload a file to a project. Only project owner can upload.\nThe file is saved locally and a message is sent to the ingestion queue.",
+
+        "operationId": "upload_file_projects__project_id__upload_post",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          }
+
+        ],
+
+        "requestBody": {
+
+          "required": true,
+
+          "content": {
+
+            "multipart/form-data": {
+
+              "schema": {
+
+                "$ref": "#/components/schemas/Body_upload_file_projects__project_id__upload_post"
+
+              }
+
+            }
+
+          }
+
+        },
+
+        "responses": {
+
+          "202": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/UploadResponse"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/files/{file_id}/status": {
+
+      "get": {
+
+        "summary": "Get File Status",
+
+        "description": "Get the processing status of an uploaded file.\nAccessible by project owner and members.",
+
+        "operationId": "get_file_status_projects__project_id__files__file_id__status_get",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          },
+
+          {
+
+            "name": "file_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "string",
+
+              "title": "File Id"
+
+            }
+
+          }
+
+        ],
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/FileStatusResponse"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/files": {
+
+      "get": {
+
+        "summary": "List Project Files",
+
+        "description": "List all files in a project.\nAccessible by project owner and members.",
+
+        "operationId": "list_project_files_projects__project_id__files_get",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          }
+
+        ],
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "type": "array",
+
+                  "items": {
+
+                    "$ref": "#/components/schemas/FileStatusResponse"
+
+                  },
+
+                  "title": "Response List Project Files Projects  Project Id  Files Get"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/files/{file_id}": {
+
+      "get": {
+
+        "summary": "Get File",
+
+        "description": "Get file metadata by file ID, including file path for download.\nAccessible by project owner and members.",
+
+        "operationId": "get_file_projects__project_id__files__file_id__get",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          },
+
+          {
+
+            "name": "file_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "string",
+
+              "title": "File Id"
+
+            }
+
+          }
+
+        ],
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/FileStatusResponse"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      },
+
+      "delete": {
+
+        "summary": "Delete File",
+
+        "description": "Delete a file from the project. Only project owner can delete.\nRemoves the file record, deletes chunks from ChromaDB, and removes the physical file.",
+
+        "operationId": "delete_file_projects__project_id__files__file_id__delete",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          },
+
+          {
+
+            "name": "file_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "string",
+
+              "title": "File Id"
+
+            }
+
+          }
+
+        ],
+
+        "responses": {
+
+          "204": {
+
+            "description": "Successful Response"
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/transcripts": {
+
+      "post": {
+
+        "summary": "Upload Transcript",
+
+        "description": "Upload and process a VTT transcript file.\nInstantly processes the transcript and stores in ChromaDB.\nOnly project owners can upload transcripts.",
+
+        "operationId": "upload_transcript_projects__project_id__transcripts_post",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          },
+
+          {
+
+            "name": "meeting_name",
+
+            "in": "query",
+
+            "required": false,
+
+            "schema": {
+
+              "type": "string",
+
+              "title": "Meeting Name"
+
+            }
+
+          },
+
+          {
+
+            "name": "meeting_date",
+
+            "in": "query",
+
+            "required": false,
+
+            "schema": {
+
+              "type": "string",
+
+              "title": "Meeting Date"
+
+            }
+
+          },
+
+          {
+
+            "name": "turns_per_chunk",
+
+            "in": "query",
+
+            "required": false,
+
+            "schema": {
+
+              "type": "integer",
+
+              "default": 8,
+
+              "title": "Turns Per Chunk"
+
+            }
+
+          },
+
+          {
+
+            "name": "overlap",
+
+            "in": "query",
+
+            "required": false,
+
+            "schema": {
+
+              "type": "integer",
+
+              "default": 3,
+
+              "title": "Overlap"
+
+            }
+
+          }
+
+        ],
+
+        "requestBody": {
+
+          "required": true,
+
+          "content": {
+
+            "multipart/form-data": {
+
+              "schema": {
+
+                "$ref": "#/components/schemas/Body_upload_transcript_projects__project_id__transcripts_post"
+
+              }
+
+            }
+
+          }
+
+        },
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/TranscriptResponse"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/query": {
+
+      "post": {
+
+        "summary": "Query Project",
+
+        "description": "Query the project's RAG system with source filtering.\nAccessible by project owners and members.",
+
+        "operationId": "query_project_projects__project_id__query_post",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          }
+
+        ],
+
+        "requestBody": {
+
+          "required": true,
+
+          "content": {
+
+            "application/json": {
+
+              "schema": {
+
+                "$ref": "#/components/schemas/QueryRequest"
+
+              }
+
+            }
+
+          }
+
+        },
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/QueryResponse"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/sessions": {
+
+      "post": {
+
+        "summary": "Create Chat Session",
+
+        "description": "Create a new chat session for the current user in a project.",
+
+        "operationId": "create_chat_session_projects__project_id__sessions_post",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          }
+
+        ],
+
+        "requestBody": {
+
+          "required": true,
+
+          "content": {
+
+            "application/json": {
+
+              "schema": {
+
+                "$ref": "#/components/schemas/ChatSessionCreate"
+
+              }
+
+            }
+
+          }
+
+        },
+
+        "responses": {
+
+          "201": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/ChatSessionResponse"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      },
+
+      "get": {
+
+        "summary": "List Chat Sessions",
+
+        "description": "List all chat sessions for the current user in a project.",
+
+        "operationId": "list_chat_sessions_projects__project_id__sessions_get",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          }
+
+        ],
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "type": "array",
+
+                  "items": {
+
+                    "$ref": "#/components/schemas/ChatSessionResponse"
+
+                  },
+
+                  "title": "Response List Chat Sessions Projects  Project Id  Sessions Get"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/sessions/{session_id}": {
+
+      "delete": {
+
+        "summary": "Delete Chat Session",
+
+        "description": "Delete a chat session and all its messages.",
+
+        "operationId": "delete_chat_session_projects__project_id__sessions__session_id__delete",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          },
+
+          {
+
+            "name": "session_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Session Id"
+
+            }
+
+          }
+
+        ],
+
+        "responses": {
+
+          "204": {
+
+            "description": "Successful Response"
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/chat/{session_id}": {
+
+      "post": {
+
+        "summary": "Chat With Project",
+
+        "description": "History-aware streaming chat with the project's RAG system.\nUses conversation history to contextualize questions.\nStreams the response with Server-Sent Events.",
+
+        "operationId": "chat_with_project_projects__project_id__chat__session_id__post",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          },
+
+          {
+
+            "name": "session_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Session Id"
+
+            }
+
+          }
+
+        ],
+
+        "requestBody": {
+
+          "required": true,
+
+          "content": {
+
+            "application/json": {
+
+              "schema": {
+
+                "$ref": "#/components/schemas/ChatMessageRequest"
+
+              }
+
+            }
+
+          }
+
+        },
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/projects/{project_id}/chat/{session_id}/history": {
+
+      "get": {
+
+        "summary": "Get Chat History",
+
+        "description": "Retrieve chat history for a specific session.",
+
+        "operationId": "get_chat_history_projects__project_id__chat__session_id__history_get",
+
+        "security": [
+
+          {
+
+            "OAuth2PasswordBearer": []
+
+          }
+
+        ],
+
+        "parameters": [
+
+          {
+
+            "name": "project_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Project Id"
+
+            }
+
+          },
+
+          {
+
+            "name": "session_id",
+
+            "in": "path",
+
+            "required": true,
+
+            "schema": {
+
+              "type": "integer",
+
+              "title": "Session Id"
+
+            }
+
+          },
+
+          {
+
+            "name": "limit",
+
+            "in": "query",
+
+            "required": false,
+
+            "schema": {
+
+              "type": "integer",
+
+              "default": 50,
+
+              "title": "Limit"
+
+            }
+
+          }
+
+        ],
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "type": "array",
+
+                  "items": {
+
+                    "$ref": "#/components/schemas/ChatMessageResponse"
+
+                  },
+
+                  "title": "Response Get Chat History Projects  Project Id  Chat  Session Id  History Get"
+
+                }
+
+              }
+
+            }
+
+          },
+
+          "422": {
+
+            "description": "Validation Error",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+                  "$ref": "#/components/schemas/HTTPValidationError"
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    },
+
+    "/": {
+
+      "get": {
+
+        "summary": "Root",
+
+        "description": "Health check endpoint.",
+
+        "operationId": "root__get",
+
+        "responses": {
+
+          "200": {
+
+            "description": "Successful Response",
+
+            "content": {
+
+              "application/json": {
+
+                "schema": {
+
+
+
+                }
+
+              }
+
+            }
+
+          }
+
+        }
+
+      }
+
+    }
+
+  },
+
+  "components": {
+
+    "schemas": {
+
+      "Body_login_auth_token_post": {
+
+        "properties": {
+
+          "grant_type": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string",
+
+                "pattern": "^password$"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Grant Type"
+
+          },
+
+          "username": {
+
+            "type": "string",
+
+            "title": "Username"
+
+          },
+
+          "password": {
+
+            "type": "string",
+
+            "format": "password",
+
+            "title": "Password"
+
+          },
+
+          "scope": {
+
+            "type": "string",
+
+            "title": "Scope",
+
+            "default": ""
+
+          },
+
+          "client_id": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Client Id"
+
+          },
+
+          "client_secret": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "format": "password",
+
+            "title": "Client Secret"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "username",
+
+          "password"
+
+        ],
+
+        "title": "Body_login_auth_token_post"
+
+      },
+
+      "Body_upload_file_projects__project_id__upload_post": {
+
+        "properties": {
+
+          "file": {
+
+            "type": "string",
+
+            "format": "binary",
+
+            "title": "File"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "file"
+
+        ],
+
+        "title": "Body_upload_file_projects__project_id__upload_post"
+
+      },
+
+      "Body_upload_transcript_projects__project_id__transcripts_post": {
+
+        "properties": {
+
+          "file": {
+
+            "type": "string",
+
+            "format": "binary",
+
+            "title": "File"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "file"
+
+        ],
+
+        "title": "Body_upload_transcript_projects__project_id__transcripts_post"
+
+      },
+
+      "ChatMessageRequest": {
+
+        "properties": {
+
+          "question": {
+
+            "type": "string",
+
+            "title": "Question"
+
+          },
+
+          "filter": {
+
+            "type": "string",
+
+            "title": "Filter",
+
+            "default": "unified"
+
+          },
+
+          "top_k": {
+
+            "type": "integer",
+
+            "title": "Top K",
+
+            "default": 5
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "question"
+
+        ],
+
+        "title": "ChatMessageRequest"
+
+      },
+
+      "ChatMessageResponse": {
+
+        "properties": {
+
+          "id": {
+
+            "type": "integer",
+
+            "title": "Id"
+
+          },
+
+          "session_id": {
+
+            "type": "integer",
+
+            "title": "Session Id"
+
+          },
+
+          "role": {
+
+            "type": "string",
+
+            "title": "Role"
+
+          },
+
+          "content": {
+
+            "type": "string",
+
+            "title": "Content"
+
+          },
+
+          "timestamp": {
+
+            "type": "string",
+
+            "format": "date-time",
+
+            "title": "Timestamp"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "id",
+
+          "session_id",
+
+          "role",
+
+          "content",
+
+          "timestamp"
+
+        ],
+
+        "title": "ChatMessageResponse"
+
+      },
+
+      "ChatSessionCreate": {
+
+        "properties": {
+
+          "name": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Name"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "title": "ChatSessionCreate"
+
+      },
+
+      "ChatSessionResponse": {
+
+        "properties": {
+
+          "id": {
+
+            "type": "integer",
+
+            "title": "Id"
+
+          },
+
+          "user_id": {
+
+            "type": "integer",
+
+            "title": "User Id"
+
+          },
+
+          "project_id": {
+
+            "type": "integer",
+
+            "title": "Project Id"
+
+          },
+
+          "name": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Name"
+
+          },
+
+          "created_at": {
+
+            "type": "string",
+
+            "format": "date-time",
+
+            "title": "Created At"
+
+          },
+
+          "updated_at": {
+
+            "type": "string",
+
+            "format": "date-time",
+
+            "title": "Updated At"
+
+          },
+
+          "message_count": {
+
+            "anyOf": [
+
+              {
+
+                "type": "integer"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Message Count"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "id",
+
+          "user_id",
+
+          "project_id",
+
+          "created_at",
+
+          "updated_at"
+
+        ],
+
+        "title": "ChatSessionResponse"
+
+      },
+
+      "FileStatusResponse": {
+
+        "properties": {
+
+          "file_id": {
+
+            "type": "string",
+
+            "title": "File Id"
+
+          },
+
+          "original_filename": {
+
+            "type": "string",
+
+            "title": "Original Filename"
+
+          },
+
+          "status": {
+
+            "type": "string",
+
+            "title": "Status"
+
+          },
+
+          "error_message": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Error Message"
+
+          },
+
+          "processed_path": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Processed Path"
+
+          },
+
+          "created_at": {
+
+            "type": "string",
+
+            "format": "date-time",
+
+            "title": "Created At"
+
+          },
+
+          "updated_at": {
+
+            "type": "string",
+
+            "format": "date-time",
+
+            "title": "Updated At"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "file_id",
+
+          "original_filename",
+
+          "status",
+
+          "created_at",
+
+          "updated_at"
+
+        ],
+
+        "title": "FileStatusResponse"
+
+      },
+
+      "HTTPValidationError": {
+
+        "properties": {
+
+          "detail": {
+
+            "items": {
+
+              "$ref": "#/components/schemas/ValidationError"
+
+            },
+
+            "type": "array",
+
+            "title": "Detail"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "title": "HTTPValidationError"
+
+      },
+
+      "MemberAdd": {
+
+        "properties": {
+
+          "username": {
+
+            "type": "string",
+
+            "title": "Username"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "username"
+
+        ],
+
+        "title": "MemberAdd"
+
+      },
+
+      "MemberResponse": {
+
+        "properties": {
+
+          "id": {
+
+            "type": "integer",
+
+            "title": "Id"
+
+          },
+
+          "username": {
+
+            "type": "string",
+
+            "title": "Username"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "id",
+
+          "username"
+
+        ],
+
+        "title": "MemberResponse"
+
+      },
+
+      "MemberWithRoleResponse": {
+
+        "properties": {
+
+          "id": {
+
+            "type": "integer",
+
+            "title": "Id"
+
+          },
+
+          "username": {
+
+            "type": "string",
+
+            "title": "Username"
+
+          },
+
+          "role": {
+
+            "type": "string",
+
+            "title": "Role"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "id",
+
+          "username",
+
+          "role"
+
+        ],
+
+        "title": "MemberWithRoleResponse"
+
+      },
+
+      "ProjectCreate": {
+
+        "properties": {
+
+          "name": {
+
+            "type": "string",
+
+            "title": "Name"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "name"
+
+        ],
+
+        "title": "ProjectCreate"
+
+      },
+
+      "ProjectResponse": {
+
+        "properties": {
+
+          "id": {
+
+            "type": "integer",
+
+            "title": "Id"
+
+          },
+
+          "name": {
+
+            "type": "string",
+
+            "title": "Name"
+
+          },
+
+          "owner_id": {
+
+            "type": "integer",
+
+            "title": "Owner Id"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "id",
+
+          "name",
+
+          "owner_id"
+
+        ],
+
+        "title": "ProjectResponse"
+
+      },
+
+      "ProjectWithRoleResponse": {
+
+        "properties": {
+
+          "id": {
+
+            "type": "integer",
+
+            "title": "Id"
+
+          },
+
+          "name": {
+
+            "type": "string",
+
+            "title": "Name"
+
+          },
+
+          "owner_id": {
+
+            "type": "integer",
+
+            "title": "Owner Id"
+
+          },
+
+          "role": {
+
+            "type": "string",
+
+            "title": "Role"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "id",
+
+          "name",
+
+          "owner_id",
+
+          "role"
+
+        ],
+
+        "title": "ProjectWithRoleResponse"
+
+      },
+
+      "QueryRequest": {
+
+        "properties": {
+
+          "question": {
+
+            "type": "string",
+
+            "title": "Question"
+
+          },
+
+          "filter": {
+
+            "type": "string",
+
+            "title": "Filter",
+
+            "default": "unified"
+
+          },
+
+          "top_k": {
+
+            "type": "integer",
+
+            "title": "Top K",
+
+            "default": 5
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "question"
+
+        ],
+
+        "title": "QueryRequest"
+
+      },
+
+      "QueryResponse": {
+
+        "properties": {
+
+          "answer": {
+
+            "type": "string",
+
+            "title": "Answer"
+
+          },
+
+          "sources": {
+
+            "items": {
+
+              "$ref": "#/components/schemas/SourceMetadata"
+
+            },
+
+            "type": "array",
+
+            "title": "Sources"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "answer",
+
+          "sources"
+
+        ],
+
+        "title": "QueryResponse"
+
+      },
+
+      "SourceMetadata": {
+
+        "properties": {
+
+          "chunk_id": {
+
+            "type": "string",
+
+            "title": "Chunk Id"
+
+          },
+
+          "source_type": {
+
+            "type": "string",
+
+            "title": "Source Type"
+
+          },
+
+          "document_name": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Document Name"
+
+          },
+
+          "page_number": {
+
+            "anyOf": [
+
+              {
+
+                "type": "integer"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Page Number"
+
+          },
+
+          "positions": {
+
+            "anyOf": [
+
+              {
+
+                "items": {
+
+
+
+                },
+
+                "type": "array"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Positions"
+
+          },
+
+          "meeting_name": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Meeting Name"
+
+          },
+
+          "meeting_date": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Meeting Date"
+
+          },
+
+          "start_time": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Start Time"
+
+          },
+
+          "end_time": {
+
+            "anyOf": [
+
+              {
+
+                "type": "string"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "End Time"
+
+          },
+
+          "speakers": {
+
+            "anyOf": [
+
+              {
+
+                "items": {
+
+                  "type": "string"
+
+                },
+
+                "type": "array"
+
+              },
+
+              {
+
+                "type": "null"
+
+              }
+
+            ],
+
+            "title": "Speakers"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "chunk_id",
+
+          "source_type"
+
+        ],
+
+        "title": "SourceMetadata"
+
+      },
+
+      "Token": {
+
+        "properties": {
+
+          "access_token": {
+
+            "type": "string",
+
+            "title": "Access Token"
+
+          },
+
+          "token_type": {
+
+            "type": "string",
+
+            "title": "Token Type"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "access_token",
+
+          "token_type"
+
+        ],
+
+        "title": "Token"
+
+      },
+
+      "TranscriptResponse": {
+
+        "properties": {
+
+          "message": {
+
+            "type": "string",
+
+            "title": "Message"
+
+          },
+
+          "file_id": {
+
+            "type": "string",
+
+            "title": "File Id"
+
+          },
+
+          "meeting_name": {
+
+            "type": "string",
+
+            "title": "Meeting Name"
+
+          },
+
+          "meeting_date": {
+
+            "type": "string",
+
+            "title": "Meeting Date"
+
+          },
+
+          "chunks_count": {
+
+            "type": "integer",
+
+            "title": "Chunks Count"
+
+          },
+
+          "speakers": {
+
+            "items": {
+
+              "type": "string"
+
+            },
+
+            "type": "array",
+
+            "title": "Speakers"
+
+          },
+
+          "collection_name": {
+
+            "type": "string",
+
+            "title": "Collection Name"
+
+          },
+
+          "status": {
+
+            "type": "string",
+
+            "title": "Status"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "message",
+
+          "file_id",
+
+          "meeting_name",
+
+          "meeting_date",
+
+          "chunks_count",
+
+          "speakers",
+
+          "collection_name",
+
+          "status"
+
+        ],
+
+        "title": "TranscriptResponse"
+
+      },
+
+      "UploadResponse": {
+
+        "properties": {
+
+          "message": {
+
+            "type": "string",
+
+            "title": "Message"
+
+          },
+
+          "file_id": {
+
+            "type": "string",
+
+            "title": "File Id"
+
+          },
+
+          "original_filename": {
+
+            "type": "string",
+
+            "title": "Original Filename"
+
+          },
+
+          "project_id": {
+
+            "type": "integer",
+
+            "title": "Project Id"
+
+          },
+
+          "size": {
+
+            "type": "integer",
+
+            "title": "Size"
+
+          },
+
+          "status": {
+
+            "type": "string",
+
+            "title": "Status"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "message",
+
+          "file_id",
+
+          "original_filename",
+
+          "project_id",
+
+          "size",
+
+          "status"
+
+        ],
+
+        "title": "UploadResponse"
+
+      },
+
+      "UserCreate": {
+
+        "properties": {
+
+          "username": {
+
+            "type": "string",
+
+            "title": "Username"
+
+          },
+
+          "password": {
+
+            "type": "string",
+
+            "title": "Password"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "username",
+
+          "password"
+
+        ],
+
+        "title": "UserCreate"
+
+      },
+
+      "UserResponse": {
+
+        "properties": {
+
+          "id": {
+
+            "type": "integer",
+
+            "title": "Id"
+
+          },
+
+          "username": {
+
+            "type": "string",
+
+            "title": "Username"
+
+          },
+
+          "is_active": {
+
+            "type": "boolean",
+
+            "title": "Is Active"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "id",
+
+          "username",
+
+          "is_active"
+
+        ],
+
+        "title": "UserResponse"
+
+      },
+
+      "ValidationError": {
+
+        "properties": {
+
+          "loc": {
+
+            "items": {
+
+              "anyOf": [
+
+                {
+
+                  "type": "string"
+
+                },
+
+                {
+
+                  "type": "integer"
+
+                }
+
+              ]
+
+            },
+
+            "type": "array",
+
+            "title": "Location"
+
+          },
+
+          "msg": {
+
+            "type": "string",
+
+            "title": "Message"
+
+          },
+
+          "type": {
+
+            "type": "string",
+
+            "title": "Error Type"
+
+          }
+
+        },
+
+        "type": "object",
+
+        "required": [
+
+          "loc",
+
+          "msg",
+
+          "type"
+
+        ],
+
+        "title": "ValidationError"
+
+      }
+
+    },
+
+    "securitySchemes": {
+
+      "OAuth2PasswordBearer": {
+
+        "type": "oauth2",
+
+        "flows": {
+
+          "password": {
+
+            "scopes": {
+
+
+
+            },
+
+            "tokenUrl": "/auth/token"
+
+          }
+
+        }
+
+      }
+
+    }
+
+  }
+
+}
+
+
+

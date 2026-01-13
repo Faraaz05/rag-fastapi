@@ -49,6 +49,33 @@ class StorageService:
             "size": len(content)
         }
     
+    def save_json_transcript(self, project_id: int, file_id: str, transcript_data: dict) -> str:
+        """
+        Save parsed transcript as JSON file.
+        
+        Args:
+            project_id: The ID of the project
+            file_id: Unique file ID
+            transcript_data: Parsed transcript data with turns
+            
+        Returns:
+            str: Path to the saved JSON file
+        """
+        import json
+        
+        # Create processed directory for project
+        processed_dir = Path(settings.PROCESSED_DIR) / str(project_id)
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save as JSON
+        json_filename = f"{file_id}.json"
+        json_path = processed_dir / json_filename
+        
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(transcript_data, f, indent=2, ensure_ascii=False)
+        
+        return str(json_path)
+    
     def delete_file(self, file_path: str) -> bool:
         """
         Delete a file from local storage.
