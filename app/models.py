@@ -74,15 +74,30 @@ class File(Base):
     project = relationship('Project', back_populates='files')
 
 
+class ChatSession(Base):
+    __tablename__ = 'chat_sessions'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    project_id = Column(Integer, ForeignKey('projects.id'), nullable=False)
+    name = Column(String, nullable=True)  # Optional session name
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship('User')
+    project = relationship('Project')
+    messages = relationship('ChatMessage', back_populates='session', cascade='all, delete-orphan')
+
+
 class ChatMessage(Base):
     __tablename__ = 'chat_messages'
 
     id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(String, index=True, nullable=False)
-    project_id = Column(Integer, ForeignKey('projects.id'), nullable=False)
+    session_id = Column(Integer, ForeignKey('chat_sessions.id'), nullable=False)
     role = Column(String, nullable=False)  # 'user' or 'assistant'
     content = Column(String, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
-    # Relationship to project
-    project = relationship('Project')
+    # Relationship to session
+    session = relationship('ChatSession', back_populates='messages')

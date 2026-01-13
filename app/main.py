@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, datetime
 from typing import Annotated
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile
@@ -15,7 +15,7 @@ from app.core.auth import (
     verify_password,
 )
 from app.core.config import settings
-from app.models import Base, User, Project, project_members, File, FileStatus, ChatMessage
+from app.models import Base, User, Project, project_members, File, FileStatus, ChatMessage, ChatSession
 from app.schemas import (
     UserCreate,
     UserResponse,
@@ -32,6 +32,8 @@ from app.schemas import (
     QueryResponse,
     ChatMessageRequest,
     ChatMessageResponse,
+    ChatSessionCreate,
+    ChatSessionResponse,
 )
 from app.services.storage import storage_service
 from app.services.queue import queue_service
@@ -505,10 +507,145 @@ def query_project(
         )
 
 
+# ================== Chat Session Endpoints ==================
+
+@app.post("/projects/{project_id}/sessions", response_model=ChatSessionResponse, status_code=status.HTTP_201_CREATED)
+def create_chat_session(
+    project_id: int,
+    session_data: ChatSessionCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new chat session for the current user in a project.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Create new session
+    new_session = ChatSession(
+        user_id=current_user.id,
+        project_id=project_id,
+        name=session_data.name or f"Chat {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+    )
+    db.add(new_session)
+    db.commit()
+    db.refresh(new_session)
+    
+    return new_session
+
+
+@app.get("/projects/{project_id}/sessions", response_model=list[ChatSessionResponse])
+def list_chat_sessions(
+    project_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    List all chat sessions for the current user in a project.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Get all sessions for this user in this project
+    sessions = db.query(ChatSession).filter(
+        ChatSession.user_id == current_user.id,
+        ChatSession.project_id == project_id
+    ).order_by(ChatSession.updated_at.desc()).all()
+    
+    # Add message count to each session
+    from sqlalchemy import func
+    result = []
+    for session in sessions:
+        msg_count = db.query(func.count(ChatMessage.id)).filter(
+            ChatMessage.session_id == session.id
+        ).scalar()
+        
+        session_dict = {
+            "id": session.id,
+            "user_id": session.user_id,
+            "project_id": session.project_id,
+            "name": session.name,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+            "message_count": msg_count
+        }
+        result.append(ChatSessionResponse(**session_dict))
+    
+    return result
+
+
+@app.delete("/projects/{project_id}/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_chat_session(
+    project_id: int,
+    session_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a chat session and all its messages.
+    """
+    # Get session and verify ownership
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id,
+        ChatSession.project_id == project_id,
+        ChatSession.user_id == current_user.id
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied"
+        )
+    
+    db.delete(session)
+    db.commit()
+    
+    return None
+
+
 @app.post("/projects/{project_id}/chat/{session_id}")
 async def chat_with_project(
     project_id: int,
-    session_id: str,
+    session_id: int,
     chat_request: ChatMessageRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: Session = Depends(get_db)
@@ -518,6 +655,19 @@ async def chat_with_project(
     Uses conversation history to contextualize questions.
     Streams the response with Server-Sent Events.
     """
+    # Validate that session exists and belongs to the user
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id,
+        ChatSession.project_id == project_id,
+        ChatSession.user_id == current_user.id
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied"
+        )
+    
     # Check if user has access to the project
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -550,8 +700,7 @@ async def chat_with_project(
     try:
         # Step 1: Fetch last 5 messages from database
         history_messages = db.query(ChatMessage).filter(
-            ChatMessage.session_id == session_id,
-            ChatMessage.project_id == project_id
+            ChatMessage.session_id == session_id
         ).order_by(ChatMessage.timestamp.desc()).limit(5).all()
         
         # Reverse to get chronological order
@@ -566,11 +715,14 @@ async def chat_with_project(
         # Step 2: Save user message to database
         user_message = ChatMessage(
             session_id=session_id,
-            project_id=project_id,
             role="user",
             content=chat_request.question
         )
         db.add(user_message)
+        
+        # Update session's updated_at timestamp
+        session.updated_at = datetime.utcnow()
+        
         db.commit()
         
         # Step 3: Generate standalone question using rewriter
@@ -649,11 +801,14 @@ async def chat_with_project(
             if full_answer:
                 assistant_message = ChatMessage(
                     session_id=session_id,
-                    project_id=project_id,
                     role="assistant",
                     content=full_answer
                 )
                 db.add(assistant_message)
+                
+                # Update session's updated_at timestamp
+                session.updated_at = datetime.utcnow()
+                
                 db.commit()
         
         return StreamingResponse(
@@ -673,7 +828,7 @@ async def chat_with_project(
 @app.get("/projects/{project_id}/chat/{session_id}/history", response_model=list[ChatMessageResponse])
 def get_chat_history(
     project_id: int,
-    session_id: str,
+    session_id: int,
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: Session = Depends(get_db),
     limit: int = 50
@@ -681,6 +836,19 @@ def get_chat_history(
     """
     Retrieve chat history for a specific session.
     """
+    # Validate that session exists and belongs to the user
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id,
+        ChatSession.project_id == project_id,
+        ChatSession.user_id == current_user.id
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied"
+        )
+    
     # Check if user has access to the project
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -705,8 +873,7 @@ def get_chat_history(
     
     # Fetch chat messages
     messages = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id,
-        ChatMessage.project_id == project_id
+        ChatMessage.session_id == session_id
     ).order_by(ChatMessage.timestamp.asc()).limit(limit).all()
     
     return messages

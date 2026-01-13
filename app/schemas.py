@@ -126,6 +126,23 @@ class QueryResponse(BaseModel):
 
 
 # Chat Schemas
+class ChatSessionCreate(BaseModel):
+    name: Optional[str] = None  # Optional session name
+
+
+class ChatSessionResponse(BaseModel):
+    id: int
+    user_id: int
+    project_id: int
+    name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    message_count: Optional[int] = None  # Optional for list views
+
+    class Config:
+        from_attributes = True
+
+
 class ChatMessageRequest(BaseModel):
     question: str
     filter: str = "unified"  # Options: "unified", "document", "transcript"
@@ -133,7 +150,8 @@ class ChatMessageRequest(BaseModel):
 
 
 class ChatMessageResponse(BaseModel):
-    session_id: str
+    id: int
+    session_id: int
     role: str
     content: str
     timestamp: datetime
