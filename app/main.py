@@ -22,8 +22,10 @@ from app.schemas import (
     Token,
     ProjectCreate,
     ProjectResponse,
+    ProjectWithRoleResponse,
     MemberAdd,
     MemberResponse,
+    MemberWithRoleResponse,
     UploadResponse,
     FileStatusResponse,
     TranscriptUpload,
@@ -139,6 +141,34 @@ def login(
 
 # ==================== PROJECT ROUTES ====================
 
+@app.get("/projects", response_model=list[ProjectWithRoleResponse])
+def list_user_projects(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """List all projects for the current user with their role (owner or member)."""
+    # Get all project memberships for the user
+    memberships = db.execute(
+        project_members.select().where(
+            project_members.c.user_id == current_user.id
+        )
+    ).all()
+    
+    # Build response with project details and roles
+    result = []
+    for membership in memberships:
+        project = db.query(Project).filter(Project.id == membership.project_id).first()
+        if project:
+            result.append(ProjectWithRoleResponse(
+                id=project.id,
+                name=project.name,
+                owner_id=project.owner_id,
+                role=membership.role
+            ))
+    
+    return result
+
+
 @app.post("/projects/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(
     project: ProjectCreate,
@@ -221,6 +251,90 @@ def add_member_to_project(
     db.commit()
     
     return user_to_add
+
+
+@app.get("/projects/{project_id}/members", response_model=list[MemberWithRoleResponse])
+def list_project_members(
+    project_id: int,
+    project: Project = Depends(is_project_owner),
+    db: Session = Depends(get_db)
+):
+    """
+    List all members of a project with their roles.
+    Only the project owner can view members.
+    """
+    # Get all members for this project
+    memberships = db.execute(
+        project_members.select().where(
+            project_members.c.project_id == project_id
+        )
+    ).all()
+    
+    # Build response with user details and roles
+    result = []
+    for membership in memberships:
+        user = db.query(User).filter(User.id == membership.user_id).first()
+        if user:
+            result.append(MemberWithRoleResponse(
+                id=user.id,
+                username=user.username,
+                role=membership.role
+            ))
+    
+    return result
+
+
+@app.delete("/projects/{project_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_member_from_project(
+    project_id: int,
+    user_id: int,
+    project: Project = Depends(is_project_owner),
+    db: Session = Depends(get_db)
+):
+    """
+    Remove a member from a project.
+    Only the project owner can remove members.
+    Cannot remove the owner themselves.
+    """
+    # Check if user to remove exists
+    user_to_remove = db.query(User).filter(User.id == user_id).first()
+    if not user_to_remove:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Prevent removing the owner
+    if user_id == project.owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot remove the project owner"
+        )
+    
+    # Check if user is a member
+    membership = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == user_id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User is not a member of this project"
+        )
+    
+    # Remove member
+    db.execute(
+        project_members.delete().where(
+            (project_members.c.user_id == user_id) &
+            (project_members.c.project_id == project_id)
+        )
+    )
+    db.commit()
+    
+    return None
 
 
 @app.post("/projects/{project_id}/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -328,6 +442,168 @@ def get_file_status(
         )
     
     return db_file
+
+
+@app.get("/projects/{project_id}/files", response_model=list[FileStatusResponse])
+def list_project_files(
+    project_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    List all files in a project.
+    Accessible by project owner and members.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Get all files for this project
+    files = db.query(File).filter(
+        File.project_id == project_id
+    ).order_by(File.created_at.desc()).all()
+    
+    return files
+
+
+@app.get("/projects/{project_id}/files/{file_id}", response_model=FileStatusResponse)
+def get_file(
+    project_id: int,
+    file_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Get file metadata by file ID, including file path for download.
+    Accessible by project owner and members.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Get file record
+    db_file = db.query(File).filter(
+        File.file_id == file_id,
+        File.project_id == project_id
+    ).first()
+    
+    if not db_file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    
+    return db_file
+
+
+@app.delete("/projects/{project_id}/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_file(
+    project_id: int,
+    file_id: str,
+    project: Project = Depends(is_project_owner),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a file from the project. Only project owner can delete.
+    Removes the file record, deletes chunks from ChromaDB, and removes the physical file.
+    """
+    # Get file record
+    db_file = db.query(File).filter(
+        File.file_id == file_id,
+        File.project_id == project_id
+    ).first()
+    
+    if not db_file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    
+    try:
+        # Step 1: Delete chunks from ChromaDB using document_name filter
+        import chromadb
+        
+        chroma_client = chromadb.HttpClient(
+            host=settings.CHROMA_HOST,
+            port=settings.CHROMA_PORT
+        )
+        
+        collection_name = f"project_{project_id}"
+        
+        try:
+            collection = chroma_client.get_collection(name=collection_name)
+            
+            # Get all chunks with this document_name
+            results = collection.get(
+                where={"document_name": db_file.original_filename},
+                include=[]
+            )
+            
+            # Delete chunks if any found
+            if results['ids']:
+                collection.delete(ids=results['ids'])
+                print(f"🗑️  Deleted {len(results['ids'])} chunks from ChromaDB for {db_file.original_filename}")
+        except Exception as e:
+            print(f"⚠️  ChromaDB deletion warning: {e}")
+            # Continue even if ChromaDB deletion fails
+        
+        # Step 2: Delete physical file from storage
+        if db_file.file_path:
+            storage_service.delete_file(db_file.file_path)
+        
+        # Delete processed JSON if exists
+        if db_file.processed_path:
+            storage_service.delete_file(db_file.processed_path)
+        
+        # Step 3: Delete file record from database
+        db.delete(db_file)
+        db.commit()
+        
+        return None
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting file: {str(e)}"
+        )
 
 
 @app.post("/projects/{project_id}/transcripts", response_model=TranscriptResponse)

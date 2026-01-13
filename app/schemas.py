@@ -42,6 +42,16 @@ class ProjectResponse(BaseModel):
         from_attributes = True
 
 
+class ProjectWithRoleResponse(BaseModel):
+    id: int
+    name: str
+    owner_id: int
+    role: str  # 'owner' or 'member'
+
+    class Config:
+        from_attributes = True
+
+
 # Member Schemas
 class MemberAdd(BaseModel):
     username: str
@@ -50,6 +60,15 @@ class MemberAdd(BaseModel):
 class MemberResponse(BaseModel):
     id: int
     username: str
+
+    class Config:
+        from_attributes = True
+
+
+class MemberWithRoleResponse(BaseModel):
+    id: int
+    username: str
+    role: str  # 'owner' or 'member'
 
     class Config:
         from_attributes = True
