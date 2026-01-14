@@ -370,8 +370,9 @@ def quick_query(
     print("=" * 80)
     
     return {
-        "answer": result["answer"],
-        "sources": result["citations"]
+        "answer": result["raw_answer"],  # Return raw LLM output with [CITE:X] markers
+        "sources": result["citations"],
+        "chunks_metadata": result["chunks_metadata"]  # Include metadata for frontend formatting
     }
 
 

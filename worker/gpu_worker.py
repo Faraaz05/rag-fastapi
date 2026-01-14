@@ -175,10 +175,15 @@ def summarise_chunks(chunks: List, document_name: str) -> List[Document]:
         if hasattr(chunk.metadata, 'orig_elements'):
             for elem in chunk.metadata.orig_elements:
                 elem_dict = elem.to_dict()
+                
+                # Extract the page number for THIS specific element
+                elem_page = elem_dict.get('metadata', {}).get('page_number')
+                
                 if 'coordinates' in elem_dict.get('metadata', {}):
                     coords = elem_dict['metadata']['coordinates']
                     positions.append({
                         'type': elem_dict.get('type'),
+                        'page_number': elem_page,  # Include page number for each element
                         'coordinates': {
                             'points': [[float(x), float(y)] for x, y in coords['points']],
                             'system': coords['system'],

@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile
 from fastapi import File as FileUpload
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
@@ -539,8 +539,13 @@ def get_file(
             detail="File not found"
         )
     
-    # Check if this is a transcript (has processed_path ending in .json)
-    if db_file.processed_path and db_file.processed_path.endswith('.json'):
+    # Check if this is a transcript by file extension
+    is_transcript = db_file.original_filename and (
+        db_file.original_filename.endswith('.vtt') or 
+        db_file.original_filename.endswith('.txt')
+    )
+    
+    if is_transcript and db_file.processed_path:
         # Return JSON content for transcripts
         try:
             import json
@@ -565,6 +570,250 @@ def get_file(
     
     # Return metadata for documents
     return db_file
+
+
+@app.get("/projects/{project_id}/files/{file_id}/download")
+def download_file(
+    project_id: int,
+    file_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Download the raw file (PDF, document, etc.).
+    Accessible by project owner and members.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Get file record
+    db_file = db.query(File).filter(
+        File.file_id == file_id,
+        File.project_id == project_id
+    ).first()
+    
+    if not db_file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    
+    # Check if this is a transcript (transcripts don't have raw files stored)
+    is_transcript = db_file.original_filename and (
+        db_file.original_filename.endswith('.vtt') or 
+        db_file.original_filename.endswith('.txt')
+    )
+    
+    if is_transcript:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Transcripts don't have downloadable raw files. Use the regular file endpoint to get JSON content."
+        )
+    
+    # Check if file exists
+    import os
+    if not db_file.file_path or not os.path.exists(db_file.file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on disk"
+        )
+    
+    # Determine media type based on file extension
+    import mimetypes
+    media_type = mimetypes.guess_type(db_file.original_filename)[0] or "application/octet-stream"
+    
+    # Return the file
+    return FileResponse(
+        path=db_file.file_path,
+        media_type=media_type,
+        filename=db_file.original_filename
+    )
+
+
+@app.get("/projects/{project_id}/download/document/{document_name}")
+def download_by_document_name(
+    project_id: int,
+    document_name: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Download a document by its original filename.
+    Accessible by project owner and members.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Find file by original filename
+    db_file = db.query(File).filter(
+        File.project_id == project_id,
+        File.original_filename == document_name
+    ).first()
+    
+    if not db_file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document '{document_name}' not found"
+        )
+    
+    # Check if this is a transcript
+    is_transcript = db_file.original_filename and (
+        db_file.original_filename.endswith('.vtt') or 
+        db_file.original_filename.endswith('.txt')
+    )
+    
+    if is_transcript:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use /download/transcript/{meeting_name} for transcript files"
+        )
+    
+    # Check if file exists
+    import os
+    if not db_file.file_path or not os.path.exists(db_file.file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on disk"
+        )
+    
+    # Determine media type
+    import mimetypes
+    media_type = mimetypes.guess_type(db_file.original_filename)[0] or "application/octet-stream"
+    
+    return FileResponse(
+        path=db_file.file_path,
+        media_type=media_type,
+        filename=db_file.original_filename
+    )
+
+
+@app.get("/projects/{project_id}/download/transcript/{meeting_name}")
+def download_by_meeting_name(
+    project_id: int,
+    meeting_name: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Get transcript JSON by meeting name.
+    Accessible by project owner and members.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Find transcript by file_path pattern (transcript_{meeting_name}_{date})
+    # Use LIKE to match the pattern
+    from sqlalchemy import or_, func
+    db_files = db.query(File).filter(
+        File.project_id == project_id,
+        File.file_path.like(f"transcript_{meeting_name}_%")
+    ).all()
+    
+    if not db_files:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Transcript for meeting '{meeting_name}' not found"
+        )
+    
+    # Use the first match (should be unique per meeting name)
+    db_file = db_files[0]
+    
+    # Verify it's a transcript
+    is_transcript = db_file.original_filename and (
+        db_file.original_filename.endswith('.vtt') or 
+        db_file.original_filename.endswith('.txt')
+    )
+    
+    if not is_transcript:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is not a transcript"
+        )
+    
+    # Return JSON content
+    if db_file.processed_path:
+        try:
+            import json
+            with open(db_file.processed_path, 'r', encoding='utf-8') as f:
+                transcript_data = json.load(f)
+            
+            return {
+                "file_id": db_file.file_id,
+                "original_filename": db_file.original_filename,
+                "project_id": db_file.project_id,
+                "size": db_file.size,
+                "status": db_file.status.value,
+                "created_at": db_file.created_at,
+                "type": "transcript",
+                "content": transcript_data
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error reading transcript file: {str(e)}"
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcript has not been processed yet"
+        )
 
 
 @app.delete("/projects/{project_id}/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
