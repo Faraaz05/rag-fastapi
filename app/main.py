@@ -347,6 +347,68 @@ def remove_member_from_project(
     return None
 
 
+@app.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(
+    project_id: int,
+    project: Project = Depends(is_project_owner),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a project and all associated data.
+    Only the project owner can delete the project.
+    Removes ChromaDB collection, storage files, and database records.
+    """
+    try:
+        # Step 1: Delete ChromaDB collection
+        import chromadb
+        
+        chroma_client = chromadb.HttpClient(
+            host=settings.CHROMA_HOST,
+            port=settings.CHROMA_PORT
+        )
+        
+        collection_name = f"project_{project_id}"
+        
+        try:
+            chroma_client.delete_collection(name=collection_name)
+            print(f"🗑️  Deleted ChromaDB collection: {collection_name}")
+        except Exception as e:
+            print(f"⚠️  ChromaDB collection deletion warning: {e}")
+            # Continue even if collection doesn't exist or deletion fails
+        
+        # Step 2: Delete all physical files from storage
+        from pathlib import Path
+        
+        # Delete raw files
+        raw_project_dir = Path(settings.UPLOAD_DIR) / str(project_id)
+        if raw_project_dir.exists():
+            import shutil
+            shutil.rmtree(raw_project_dir, ignore_errors=True)
+            print(f"🗑️  Deleted raw files for project {project_id}")
+        
+        # Delete processed files
+        processed_project_dir = Path(settings.PROCESSED_DIR) / str(project_id)
+        if processed_project_dir.exists():
+            import shutil
+            shutil.rmtree(processed_project_dir, ignore_errors=True)
+            print(f"🗑️  Deleted processed files for project {project_id}")
+        
+        # Step 3: Delete project from database (cascades to files and removes project_members)
+        db.delete(project)
+        db.commit()
+        
+        print(f"✅ Successfully deleted project {project_id}")
+        return None
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting project: {str(e)}"
+        )
+
+
 @app.post("/projects/{project_id}/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_file(
     project_id: int,
@@ -1389,10 +1451,33 @@ async def chat_with_project(
             
             # Step 6: Save assistant response to database after streaming completes
             if full_answer:
+                # Convert chunks_metadata to sources list
+                sources_list = []
+                for chunk_id, metadata in chunks_metadata.items():
+                    if metadata["source_type"] == "meeting_transcript":
+                        sources_list.append({
+                            "chunk_id": str(chunk_id),
+                            "source_type": "transcript",
+                            "meeting_name": metadata.get("meeting_name"),
+                            "meeting_date": metadata.get("meeting_date"),
+                            "start_time": metadata.get("start_time"),
+                            "end_time": metadata.get("end_time"),
+                            "speakers": metadata.get("speakers")
+                        })
+                    else:
+                        sources_list.append({
+                            "chunk_id": str(chunk_id),
+                            "source_type": "document",
+                            "document_name": metadata.get("document"),
+                            "page_number": metadata.get("page"),
+                            "positions": metadata.get("positions")
+                        })
+                
                 assistant_message = ChatMessage(
                     session_id=session_id,
                     role="assistant",
-                    content=full_answer
+                    content=full_answer,
+                    sources=sources_list if sources_list else None
                 )
                 db.add(assistant_message)
                 

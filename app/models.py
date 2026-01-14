@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Table, Enum, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Table, Enum, DateTime, JSON
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 import enum
@@ -97,6 +97,7 @@ class ChatMessage(Base):
     session_id = Column(Integer, ForeignKey('chat_sessions.id'), nullable=False)
     role = Column(String, nullable=False)  # 'user' or 'assistant'
     content = Column(String, nullable=False)
+    sources = Column(JSON, nullable=True)  # Store citation metadata for assistant messages
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     # Relationship to session

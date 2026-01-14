@@ -173,6 +173,7 @@ class ChatMessageResponse(BaseModel):
     session_id: int
     role: str
     content: str
+    sources: Optional[list[SourceMetadata]] = None
     timestamp: datetime
 
     class Config:
