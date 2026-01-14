@@ -149,6 +149,14 @@ def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+@app.get("/auth/me", response_model=UserResponse)
+def get_current_user_info(
+    current_user: Annotated[User, Depends(get_current_active_user)]
+):
+    """Get current authenticated user information."""
+    return current_user
+
+
 # ==================== PROJECT ROUTES ====================
 
 @app.get("/projects", response_model=list[ProjectWithRoleResponse])
