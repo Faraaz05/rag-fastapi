@@ -1,5 +1,6 @@
 from datetime import timedelta, datetime
 from typing import Annotated
+from pathlib import Path
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile
 from fastapi import File as FileUpload
@@ -426,8 +427,19 @@ async def upload_file(
 ):
     """
     Upload a file to a project. Only project owner can upload.
+    Accepts PDF and DOCX files. DOCX files will be converted to PDF automatically.
     The file is saved locally and a message is sent to the ingestion queue.
     """
+    # Validate file type (PDF or DOCX)
+    allowed_extensions = {".pdf", ".docx"}
+    file_ext = Path(file.filename).suffix.lower()
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not supported. Allowed types: PDF, DOCX"
+        )
+    
     # Save file to local storage
     file_info = await storage_service.save_file(project_id, file)
     

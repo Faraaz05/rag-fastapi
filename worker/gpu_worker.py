@@ -1,12 +1,16 @@
 """
 GPU Worker for Document Processing
 Uses Unstructured.io for hi_res PDF partitioning (GPU-accelerated)
+Converts DOCX to PDF using headless LibreOffice before processing
 Follows the exact logic from 8_multi_modal_rag.ipynb
 """
 import json
 import logging
 import sys
 import os
+import subprocess
+import tempfile
+import shutil
 from pathlib import Path
 from typing import List, Dict
 import time
@@ -56,6 +60,75 @@ llm = ChatGroq(
     temperature=0,
     max_tokens=4096
 )
+
+
+def convert_docx_to_pdf(docx_path: str) -> str:
+    """
+    Convert DOCX to PDF using headless LibreOffice.
+    Returns the path to the generated PDF file.
+    
+    Args:
+        docx_path: Path to the DOCX file
+        
+    Returns:
+        Path to the converted PDF file
+        
+    Raises:
+        RuntimeError: If conversion fails
+    """
+    log.info(f"📄 Converting DOCX to PDF: {docx_path}")
+    
+    # Create a temporary directory for the conversion
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Run LibreOffice in headless mode to convert DOCX to PDF
+        # --headless: Run without GUI
+        # --convert-to pdf: Convert to PDF format
+        # --outdir: Output directory
+        cmd = [
+            "libreoffice",
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            temp_dir,
+            docx_path
+        ]
+        
+        log.info(f"🔄 Running LibreOffice conversion...")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120  # 2 minute timeout
+        )
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"LibreOffice conversion failed: {result.stderr}")
+        
+        # Find the generated PDF file
+        docx_filename = Path(docx_path).stem
+        pdf_path = Path(temp_dir) / f"{docx_filename}.pdf"
+        
+        if not pdf_path.exists():
+            raise RuntimeError(f"PDF file not generated: {pdf_path}")
+        
+        # Move the PDF to the same directory as the DOCX
+        final_pdf_path = Path(docx_path).parent / f"{docx_filename}.pdf"
+        shutil.move(str(pdf_path), str(final_pdf_path))
+        
+        log.info(f"✅ Conversion successful: {final_pdf_path}")
+        
+        return str(final_pdf_path)
+        
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("LibreOffice conversion timed out (exceeded 2 minutes)")
+    except Exception as e:
+        raise RuntimeError(f"DOCX to PDF conversion failed: {str(e)}")
+    finally:
+        # Clean up temporary directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def partition_document(file_path: str):
@@ -299,14 +372,36 @@ def process_document(message: dict, db: Session):
         return
     
     try:
+        # ========== STAGE 0: DOCX CONVERSION (IF NEEDED) ==========
+        pdf_path = file_path
+        is_docx = original_filename.lower().endswith('.docx')
+        
+        if is_docx:
+            log.info("📋 STAGE 0: DOCX TO PDF CONVERSION")
+            db_file.status = FileStatus.PARTITIONING  # Use PARTITIONING status for conversion
+            db.commit()
+            log.info("📊 Status updated to PARTITIONING (converting DOCX)")
+            
+            try:
+                pdf_path = convert_docx_to_pdf(file_path)
+                log.info(f"✅ DOCX converted to PDF: {pdf_path}")
+                
+                # Update the file path in the database to point to the PDF
+                db_file.file_path = pdf_path
+                db.commit()
+                
+            except Exception as e:
+                log.error(f"❌ DOCX conversion failed: {str(e)}")
+                raise RuntimeError(f"Failed to convert DOCX to PDF: {str(e)}")
+        
         # ========== STAGE 1: PARTITIONING ==========
         log.info("📋 STAGE 1: PARTITIONING")
         db_file.status = FileStatus.PARTITIONING
         db.commit()
         log.info("📊 Status updated to PARTITIONING")
         
-        # Step 1: Partition document
-        elements = partition_document(file_path)
+        # Step 1: Partition document (now always using PDF)
+        elements = partition_document(pdf_path)
         
         # Step 2: Create chunks
         chunks = create_chunks_by_title(elements)
