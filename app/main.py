@@ -418,74 +418,74 @@ def delete_project(
         )
 
 
-@app.post("/projects/{project_id}/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
+@app.post("/projects/{project_id}/upload", response_model=list[UploadResponse], status_code=status.HTTP_202_ACCEPTED)
 async def upload_file(
     project_id: int,
-    file: UploadFile = FileUpload(...),
+    files: list[UploadFile] = FileUpload(...),
     project: Project = Depends(is_project_owner),
     db: Session = Depends(get_db)
 ):
     """
-    Upload a file to a project. Only project owner can upload.
+    Upload multiple files to a project. Only project owner can upload.
     Accepts PDF and DOCX files. DOCX files will be converted to PDF automatically.
-    The file is saved locally and a message is sent to the ingestion queue.
+    The files are saved locally and messages are sent to the ingestion queue.
     """
-    # Validate file type (PDF or DOCX)
     allowed_extensions = {".pdf", ".docx"}
-    file_ext = Path(file.filename).suffix.lower()
+    responses = []
     
-    if file_ext not in allowed_extensions:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File type not supported. Allowed types: PDF, DOCX"
+    for file in files:
+        # Validate file type
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File type not supported for {file.filename}. Allowed types: PDF, DOCX"
+            )
+        
+        # Save file to local storage
+        file_info = await storage_service.save_file(project_id, file)
+        
+        # Create file record in database
+        db_file = File(
+            file_id=file_info["file_id"],
+            project_id=project_id,
+            original_filename=file_info["original_filename"],
+            file_path=file_info["file_path"],
+            size=file_info["size"],
+            status=FileStatus.QUEUED  # Set to QUEUED when pushing to Redis
         )
-    
-    # Save file to local storage
-    file_info = await storage_service.save_file(project_id, file)
-    
-    # Create file record in database
-    db_file = File(
-        file_id=file_info["file_id"],
-        project_id=project_id,
-        original_filename=file_info["original_filename"],
-        file_path=file_info["file_path"],
-        size=file_info["size"],
-        status=FileStatus.QUEUED  # Set to QUEUED when pushing to Redis
-    )
-    db.add(db_file)
-    db.commit()
-    db.refresh(db_file)
-    
-    # Prepare message for the ingestion queue
-    message = {
-        "project_id": project_id,
-        "file_id": file_info["file_id"],
-        "file_path": file_info["file_path"],
-        "original_filename": file_info["original_filename"],
-        "size": file_info["size"]
-    }
-    
-    # Push message to Redis queue
-    queue_success = queue_service.push_message(message)
-    
-    if not queue_success:
-        # Update status to FAILED if queue push fails
-        db_file.status = FileStatus.FAILED
-        db_file.error_message = "Failed to queue file for processing"
+        db.add(db_file)
         db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to queue file for processing"
-        )
+        db.refresh(db_file)
+        
+        # Prepare message for the ingestion queue
+        message = {
+            "project_id": project_id,
+            "file_id": file_info["file_id"],
+            "file_path": file_info["file_path"],
+            "original_filename": file_info["original_filename"],
+            "size": file_info["size"]
+        }
+        
+        # Push message to Redis queue
+        queue_success = queue_service.push_message(message)
+        
+        if not queue_success:
+            # Update status to FAILED if queue push fails
+            db_file.status = FileStatus.FAILED
+            db_file.error_message = "Failed to queue file for processing"
+            db.commit()
+        
+        responses.append(UploadResponse(
+            message="File uploaded successfully and queued for processing" if queue_success else "File uploaded but failed to queue for processing",
+            file_id=file_info["file_id"],
+            original_filename=file_info["original_filename"],
+            project_id=project_id,
+            size=file_info["size"],
+            status=db_file.status.value
+        ))
     
-    return UploadResponse(
-        message="File uploaded successfully and queued for processing",
-        file_id=file_info["file_id"],
-        original_filename=file_info["original_filename"],
-        project_id=project_id,
-        size=file_info["size"],
-        status=db_file.status.value
-    )
+    return responses
 
 
 @app.get("/projects/{project_id}/files/{file_id}/status", response_model=FileStatusResponse)
