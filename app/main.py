@@ -45,7 +45,8 @@ from app.services.transcript import process_transcript_file
 from app.services.rag import quick_query, get_standalone_question, streaming_chat, query_with_filter
 
 # Database setup
-engine = create_engine(settings.DATABASE_URL, connect_args={"check_same_thread": False})
+connect_args = {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
+engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create tables
@@ -386,21 +387,7 @@ def delete_project(
             # Continue even if collection doesn't exist or deletion fails
         
         # Step 2: Delete all physical files from storage
-        from pathlib import Path
-        
-        # Delete raw files
-        raw_project_dir = Path(settings.UPLOAD_DIR) / str(project_id)
-        if raw_project_dir.exists():
-            import shutil
-            shutil.rmtree(raw_project_dir, ignore_errors=True)
-            print(f"🗑️  Deleted raw files for project {project_id}")
-        
-        # Delete processed files
-        processed_project_dir = Path(settings.PROCESSED_DIR) / str(project_id)
-        if processed_project_dir.exists():
-            import shutil
-            shutil.rmtree(processed_project_dir, ignore_errors=True)
-            print(f"🗑️  Deleted processed files for project {project_id}")
+        storage_service.delete_directory(project_id)
         
         # Step 3: Delete project from database (cascades to files and removes project_members)
         db.delete(project)
@@ -631,8 +618,15 @@ def get_file(
         # Return JSON content for transcripts
         try:
             import json
-            with open(db_file.processed_path, 'r', encoding='utf-8') as f:
-                transcript_data = json.load(f)
+            # Get content from S3 or local storage
+            content_bytes = storage_service.get_file_content(db_file.processed_path)
+            if content_bytes is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Transcript file not found"
+                )
+            
+            transcript_data = json.loads(content_bytes.decode('utf-8'))
             
             return {
                 "file_id": db_file.file_id,
@@ -644,6 +638,11 @@ def get_file(
                 "type": "transcript",
                 "content": transcript_data
             }
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error parsing transcript file"
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -711,24 +710,51 @@ def download_file(
             detail="Transcripts don't have downloadable raw files. Use the regular file endpoint to get JSON content."
         )
     
-    # Check if file exists
-    import os
-    if not db_file.file_path or not os.path.exists(db_file.file_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found on disk"
+    # Generate download URL or serve file
+    if settings.USE_S3:
+        # Proxy the file through backend to avoid CORS issues
+        try:
+            # Determine media type based on file extension
+            import mimetypes
+            media_type = mimetypes.guess_type(db_file.original_filename)[0] or "application/octet-stream"
+            
+            # Stream file content directly
+            from fastapi.responses import StreamingResponse
+            
+            return StreamingResponse(
+                storage_service.get_file_stream(db_file.file_path),
+                media_type=media_type,
+                headers={"Content-Disposition": f"attachment; filename={db_file.original_filename}"}
+            )
+        except Exception as e:
+            if "File not found" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found"
+                )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve file: {str(e)}"
+            )
+    else:
+        # Local file serving
+        import os
+        if not db_file.file_path or not os.path.exists(db_file.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found on disk"
+            )
+        
+        # Determine media type based on file extension
+        import mimetypes
+        media_type = mimetypes.guess_type(db_file.original_filename)[0] or "application/octet-stream"
+        
+        # Return the file
+        return FileResponse(
+            path=db_file.file_path,
+            media_type=media_type,
+            filename=db_file.original_filename
         )
-    
-    # Determine media type based on file extension
-    import mimetypes
-    media_type = mimetypes.guess_type(db_file.original_filename)[0] or "application/octet-stream"
-    
-    # Return the file
-    return FileResponse(
-        path=db_file.file_path,
-        media_type=media_type,
-        filename=db_file.original_filename
-    )
 
 
 @app.get("/projects/{project_id}/download/document/{document_name}")
@@ -788,23 +814,50 @@ def download_by_document_name(
             detail="Use /download/transcript/{meeting_name} for transcript files"
         )
     
-    # Check if file exists
-    import os
-    if not db_file.file_path or not os.path.exists(db_file.file_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found on disk"
+    # Generate download URL or serve file
+    if settings.USE_S3:
+        # Proxy the file through backend to avoid CORS issues
+        try:
+            # Determine media type based on file extension
+            import mimetypes
+            media_type = mimetypes.guess_type(db_file.original_filename)[0] or "application/octet-stream"
+            
+            # Stream file content directly
+            from fastapi.responses import StreamingResponse
+            
+            return StreamingResponse(
+                storage_service.get_file_stream(db_file.file_path),
+                media_type=media_type,
+                headers={"Content-Disposition": f"attachment; filename={db_file.original_filename}"}
+            )
+        except Exception as e:
+            if "File not found" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found"
+                )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve file: {str(e)}"
+            )
+    else:
+        # Local file serving
+        import os
+        if not db_file.file_path or not os.path.exists(db_file.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found on disk"
+            )
+        
+        # Determine media type
+        import mimetypes
+        media_type = mimetypes.guess_type(db_file.original_filename)[0] or "application/octet-stream"
+        
+        return FileResponse(
+            path=db_file.file_path,
+            media_type=media_type,
+            filename=db_file.original_filename
         )
-    
-    # Determine media type
-    import mimetypes
-    media_type = mimetypes.guess_type(db_file.original_filename)[0] or "application/octet-stream"
-    
-    return FileResponse(
-        path=db_file.file_path,
-        media_type=media_type,
-        filename=db_file.original_filename
-    )
 
 
 @app.get("/projects/{project_id}/download/transcript/{meeting_name}")
@@ -873,8 +926,15 @@ def download_by_meeting_name(
     if db_file.processed_path:
         try:
             import json
-            with open(db_file.processed_path, 'r', encoding='utf-8') as f:
-                transcript_data = json.load(f)
+            # Get content from S3 or local storage
+            content_bytes = storage_service.get_file_content(db_file.processed_path)
+            if content_bytes is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Transcript has not been processed yet"
+                )
+            
+            transcript_data = json.loads(content_bytes.decode('utf-8'))
             
             return {
                 "file_id": db_file.file_id,
@@ -886,6 +946,11 @@ def download_by_meeting_name(
                 "type": "transcript",
                 "content": transcript_data
             }
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error parsing transcript file"
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

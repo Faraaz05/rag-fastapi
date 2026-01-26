@@ -48,7 +48,8 @@ logging.basicConfig(
 log = logging.getLogger("GPUWorker")
 
 # Database connection
-engine = create_engine(settings.DATABASE_URL, connect_args={"check_same_thread": False})
+connect_args = {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
+engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Redis connection
@@ -309,6 +310,8 @@ def summarise_chunks(chunks: List, document_name: str) -> List[Document]:
 
 def export_chunks_to_json(chunks, filename):
     """Export processed chunks to JSON - EXACT LOGIC FROM NOTEBOOK"""
+    from app.services.storage import storage_service
+    
     export_data = []
     
     for i, doc in enumerate(chunks):
@@ -332,8 +335,26 @@ def export_chunks_to_json(chunks, filename):
         }
         export_data.append(chunk_data)
     
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(export_data, f, indent=2, ensure_ascii=False)
+    # Save using storage service (handles S3 or local)
+    if storage_service.use_s3:
+        # filename is already an S3 key
+        json_content = json.dumps(export_data, indent=2, ensure_ascii=False)
+        json_bytes = json_content.encode('utf-8')
+        
+        try:
+            storage_service.s3_client.put_object(
+                Bucket=storage_service.bucket_name,
+                Key=filename,
+                Body=json_bytes,
+                ContentType='application/json'
+            )
+        except Exception as e:
+            log.error(f"Failed to save chunks to S3: {e}")
+            return
+    else:
+        # Local file saving
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(export_data, f, indent=2, ensure_ascii=False)
     
     log.info(f"✅ Exported {len(export_data)} chunks to {filename}")
     return export_data
@@ -358,9 +379,13 @@ def sanitize_metadata(metadata: dict) -> dict:
 
 def process_document(message: dict, db: Session):
     """Main document processing function with full pipeline"""
+    from app.services.storage import storage_service
+    import tempfile
+    import os
+    
     project_id = message["project_id"]
     file_id = message["file_id"]
-    file_path = message["file_path"]
+    file_path = message["file_path"]  # This could be S3 key or local path
     original_filename = message["original_filename"]
     
     log.info(f"🎯 Starting processing for file: {original_filename}")
@@ -371,9 +396,42 @@ def process_document(message: dict, db: Session):
         log.error(f"❌ File record not found: {file_id}")
         return
     
+    # Handle S3 file download if needed
+    temp_file_path = None
+    actual_file_path = file_path
+    
+    if storage_service.use_s3 and not os.path.exists(file_path):
+        # File is in S3, download to temporary location
+        log.info(f"📥 Downloading file from S3: {file_path}")
+        try:
+            file_content = storage_service.get_file_content(file_path)
+            if file_content is None:
+                log.error(f"❌ Failed to download file from S3: {file_path}")
+                db_file.status = FileStatus.FAILED
+                db_file.error_message = "Failed to download file from S3"
+                db.commit()
+                return
+            
+            # Create temporary file
+            temp_fd, temp_file_path = tempfile.mkstemp(suffix=os.path.splitext(original_filename)[1])
+            os.close(temp_fd)  # Close the file descriptor
+            
+            with open(temp_file_path, 'wb') as f:
+                f.write(file_content)
+            
+            actual_file_path = temp_file_path
+            log.info(f"✅ Downloaded to temporary file: {temp_file_path}")
+            
+        except Exception as e:
+            log.error(f"❌ Error downloading from S3: {str(e)}")
+            db_file.status = FileStatus.FAILED
+            db_file.error_message = f"Failed to download file from S3: {str(e)}"
+            db.commit()
+            return
+    
     try:
         # ========== STAGE 0: DOCX CONVERSION (IF NEEDED) ==========
-        pdf_path = file_path
+        pdf_path = actual_file_path
         is_docx = original_filename.lower().endswith('.docx')
         
         if is_docx:
@@ -383,12 +441,32 @@ def process_document(message: dict, db: Session):
             log.info("📊 Status updated to PARTITIONING (converting DOCX)")
             
             try:
-                pdf_path = convert_docx_to_pdf(file_path)
+                pdf_path = convert_docx_to_pdf(actual_file_path)
                 log.info(f"✅ DOCX converted to PDF: {pdf_path}")
                 
-                # Update the file path in the database to point to the PDF
-                db_file.file_path = pdf_path
-                db.commit()
+                # For S3 storage, upload the converted PDF back to S3
+                if storage_service.use_s3:
+                    with open(pdf_path, 'rb') as f:
+                        pdf_content = f.read()
+                    
+                    pdf_s3_key = file_path.replace('.docx', '.pdf')
+                    storage_service.s3_client.put_object(
+                        Bucket=storage_service.bucket_name,
+                        Key=pdf_s3_key,
+                        Body=pdf_content,
+                        ContentType='application/pdf'
+                    )
+                    
+                    # Update database with S3 key
+                    db_file.file_path = pdf_s3_key
+                    db.commit()
+                    
+                    log.info(f"✅ Uploaded converted PDF to S3: {pdf_s3_key}")
+                    
+                else:
+                    # For local storage, update the database with the local PDF path
+                    db_file.file_path = pdf_path
+                    db.commit()
                 
             except Exception as e:
                 log.error(f"❌ DOCX conversion failed: {str(e)}")
@@ -410,12 +488,10 @@ def process_document(message: dict, db: Session):
         processed_chunks = summarise_chunks(chunks, original_filename)
         
         # Step 4: Save to JSON (for backup/debugging)
-        processed_dir = Path(settings.UPLOAD_DIR.replace("raw", "processed")) / str(project_id)
-        processed_dir.mkdir(parents=True, exist_ok=True)
-        
-        output_file = processed_dir / f"{file_id}.json"
-        export_chunks_to_json(processed_chunks, str(output_file))
-        db_file.processed_path = str(output_file)
+        from app.services.storage import storage_service
+        output_file = f"projects/{project_id}/processed/{file_id}.json"
+        export_chunks_to_json(processed_chunks, output_file)
+        db_file.processed_path = output_file
         
         # ========== STAGE 2: EMBEDDING ==========
         log.info("\n🔮 STAGE 2: EMBEDDING")
@@ -511,11 +587,29 @@ def process_document(message: dict, db: Session):
         log.info(f"📄 Processed {len(processed_chunks)} chunks")
         log.info(f"💾 Stored in ChromaDB collection: {collection_name}")
         
+        # Clean up temporary files
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+            log.info(f"🧹 Cleaned up temporary file: {temp_file_path}")
+        # Clean up any temporary PDF files from DOCX conversion
+        if pdf_path != actual_file_path and pdf_path.startswith('/tmp/') and os.path.exists(pdf_path):
+            os.unlink(pdf_path)
+            log.info(f"🧹 Cleaned up temporary PDF: {pdf_path}")
+        
     except Exception as e:
         log.error(f"❌ Processing failed: {str(e)}", exc_info=True)
         db_file.status = FileStatus.FAILED
         db_file.error_message = str(e)[:500]  # Limit error message length
         db.commit()
+        
+        # Clean up temporary files on error
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+            log.info(f"🧹 Cleaned up temporary file after error: {temp_file_path}")
+        # Clean up any temporary PDF files from DOCX conversion
+        if 'pdf_path' in locals() and pdf_path != actual_file_path and pdf_path.startswith('/tmp/') and os.path.exists(pdf_path):
+            os.unlink(pdf_path)
+            log.info(f"🧹 Cleaned up temporary PDF after error: {pdf_path}")
 
 
 def main():
