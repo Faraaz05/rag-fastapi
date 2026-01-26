@@ -510,6 +510,7 @@ CITATION RULES:
 5. For information from multiple chunks, use [CITE:X, Y, Z] format
 6. You can cite both documents and transcripts - they are equally valid sources
 7. If information is not in the context, say "I don't have information about that"
+8. The [CITE:X] format should NEVER be ignored.
 {history_str}
 USER QUERY: {question}
 
