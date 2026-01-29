@@ -1,6 +1,8 @@
 from datetime import timedelta, datetime
 from typing import Annotated
 from pathlib import Path
+import subprocess
+import os
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile
 from fastapi import File as FileUpload
@@ -445,26 +447,49 @@ async def upload_file(
         db.commit()
         db.refresh(db_file)
         
-        # Prepare message for the ingestion queue
-        message = {
-            "project_id": project_id,
-            "file_id": file_info["file_id"],
-            "file_path": file_info["file_path"],
-            "original_filename": file_info["original_filename"],
-            "size": file_info["size"]
+        # Prepare environment variables for AWS Batch worker
+        env_vars = {
+            'DATABASE_URL': settings.DATABASE_URL,
+            'GROQ_API_KEY': settings.GROQ_API_KEY,
+            'GOOGLE_API_KEY': settings.GOOGLE_API_KEY,
+            'PROJECT_ID': str(project_id),
+            'FILE_ID': file_info["file_id"],
+            'S3_PATH': file_info["file_path"],  # This is the S3 key
+            'ORIGINAL_FILENAME': file_info["original_filename"],
+            'S3_BUCKET_NAME': settings.S3_BUCKET_NAME,
+            'CHROMA_HOST': settings.CHROMA_HOST,
+            'CHROMA_PORT': str(settings.CHROMA_PORT),
+            'AWS_ACCESS_KEY_ID': settings.AWS_ACCESS_KEY_ID,
+            'AWS_SECRET_ACCESS_KEY': settings.AWS_SECRET_ACCESS_KEY,
+            'AWS_DEFAULT_REGION': settings.AWS_DEFAULT_REGION,
         }
-        
-        # Push message to Redis queue
-        queue_success = queue_service.push_message(message)
-        
-        if not queue_success:
-            # Update status to FAILED if queue push fails
+
+        # Run AWS Batch worker container asynchronously
+        cmd = ['docker', 'run', '--rm', '--gpus', 'all', '--network', 'host', '-v', f'{os.getcwd()}/.env:/app/.env']
+
+        # Add environment variables
+        for key, value in env_vars.items():
+            if value:  # Only add if value exists
+                cmd.extend(['-e', f'{key}={value}'])
+
+        # Add container name
+        cmd.append('aws-batch-gpu-worker')
+
+        try:
+            # Run the container asynchronously (don't wait for completion)
+            # Container logs will be visible in the terminal
+            process = subprocess.Popen(cmd, cwd=os.path.dirname(__file__))
+            container_success = True  # Assume success for now, status will be updated by the worker
+
+        except Exception as e:
+            # Update status to FAILED if container start fails
             db_file.status = FileStatus.FAILED
-            db_file.error_message = "Failed to queue file for processing"
+            db_file.error_message = f"Failed to start container: {str(e)}"
             db.commit()
+            container_success = False
         
         responses.append(UploadResponse(
-            message="File uploaded successfully and queued for processing" if queue_success else "File uploaded but failed to queue for processing",
+            message="File uploaded successfully and processing started" if container_success else f"File uploaded but failed to start processing: {db_file.error_message}",
             file_id=file_info["file_id"],
             original_filename=file_info["original_filename"],
             project_id=project_id,

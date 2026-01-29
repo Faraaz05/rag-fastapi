@@ -1,0 +1,3 @@
+pdf2image
+pdfminer.six==20260107
+unstructured-pytesseract==0.3.13
