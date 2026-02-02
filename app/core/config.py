@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     AWS_DEFAULT_REGION: str = "ap-south-1"
     S3_BUCKET_NAME: str | None = None
     USE_S3: bool = False
+    
+    # Queue Settings (Redis for local, SQS for AWS)
+    USE_SQS: bool = False
+    SQS_QUEUE_URL: str | None = None
+    QUEUE_NAME: str = "ingestion_queue"
         # ChromaDB Settings
     CHROMA_HOST: str = "chromadb"
     CHROMA_PORT: int = 8001
@@ -28,9 +33,6 @@ class Settings(BaseSettings):
     # AI API Keys (optional for basic functionality)
     GROQ_API_KEY: str | None = None
     GOOGLE_API_KEY: str | None = None
-    
-    # Queue Settings
-    QUEUE_NAME: str = "ingestion_queue"
 
     class Config:
         env_file = ".env"
