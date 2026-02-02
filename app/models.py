@@ -53,6 +53,8 @@ class Project(Base):
     members = relationship('User', secondary=project_members, back_populates='member_projects')
     # Relationship to files
     files = relationship('File', back_populates='project', cascade='all, delete-orphan')
+    # Relationship to chat sessions
+    chat_sessions = relationship('ChatSession', back_populates='project', cascade='all, delete-orphan')
 
 
 class File(Base):
@@ -86,7 +88,7 @@ class ChatSession(Base):
 
     # Relationships
     user = relationship('User')
-    project = relationship('Project')
+    project = relationship('Project', back_populates='chat_sessions')
     messages = relationship('ChatMessage', back_populates='session', cascade='all, delete-orphan')
 
 

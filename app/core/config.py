@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # AI API Keys (optional for basic functionality)
     GROQ_API_KEY: str | None = None
     GOOGLE_API_KEY: str | None = None
+    
+    # Queue Settings
+    QUEUE_NAME: str = "ingestion_queue"
 
     class Config:
         env_file = ".env"

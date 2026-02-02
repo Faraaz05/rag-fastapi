@@ -18,6 +18,7 @@ from app.core.auth import (
     get_password_hash,
     verify_password,
 )
+
 from app.core.config import settings
 from app.models import Base, User, Project, project_members, File, FileStatus, ChatMessage, ChatSession
 from app.schemas import (
@@ -447,49 +448,30 @@ async def upload_file(
         db.commit()
         db.refresh(db_file)
         
-        # Prepare environment variables for AWS Batch worker
-        env_vars = {
-            'DATABASE_URL': settings.DATABASE_URL,
-            'GROQ_API_KEY': settings.GROQ_API_KEY,
-            'GOOGLE_API_KEY': settings.GOOGLE_API_KEY,
-            'PROJECT_ID': str(project_id),
-            'FILE_ID': file_info["file_id"],
-            'S3_PATH': file_info["file_path"],  # This is the S3 key
-            'ORIGINAL_FILENAME': file_info["original_filename"],
-            'S3_BUCKET_NAME': settings.S3_BUCKET_NAME,
-            'CHROMA_HOST': settings.CHROMA_HOST,
-            'CHROMA_PORT': str(settings.CHROMA_PORT),
-            'AWS_ACCESS_KEY_ID': settings.AWS_ACCESS_KEY_ID,
-            'AWS_SECRET_ACCESS_KEY': settings.AWS_SECRET_ACCESS_KEY,
-            'AWS_DEFAULT_REGION': settings.AWS_DEFAULT_REGION,
+        # Prepare job message for the worker
+        job = {
+            "project_id": str(project_id),
+            "file_id": file_info["file_id"],
+            "s3_key": file_info["file_path"],  # This is the S3 key or local path
+            "original_filename": file_info["original_filename"],
+            "bucket_name": settings.S3_BUCKET_NAME,
         }
 
-        # Run AWS Batch worker container asynchronously
-        cmd = ['docker', 'run', '--rm', '--gpus', 'all', '--network', 'host', '-v', f'{os.getcwd()}/.env:/app/.env']
-
-        # Add environment variables
-        for key, value in env_vars.items():
-            if value:  # Only add if value exists
-                cmd.extend(['-e', f'{key}={value}'])
-
-        # Add container name
-        cmd.append('aws-batch-gpu-worker')
-
+        # Push job to the ingestion queue
         try:
-            # Run the container asynchronously (don't wait for completion)
-            # Container logs will be visible in the terminal
-            process = subprocess.Popen(cmd, cwd=os.path.dirname(__file__))
-            container_success = True  # Assume success for now, status will be updated by the worker
-
+            success = queue_service.push_message(job)
+            if not success:
+                raise Exception("Failed to push message to queue")
+            message = "File uploaded successfully and queued for processing"
         except Exception as e:
-            # Update status to FAILED if container start fails
+            # Update status to FAILED if queue push fails
             db_file.status = FileStatus.FAILED
-            db_file.error_message = f"Failed to start container: {str(e)}"
+            db_file.error_message = f"Failed to queue for processing: {str(e)}"
             db.commit()
-            container_success = False
+            message = f"File uploaded but failed to queue for processing: {db_file.error_message}"
         
         responses.append(UploadResponse(
-            message="File uploaded successfully and processing started" if container_success else f"File uploaded but failed to start processing: {db_file.error_message}",
+            message=message,
             file_id=file_info["file_id"],
             original_filename=file_info["original_filename"],
             project_id=project_id,

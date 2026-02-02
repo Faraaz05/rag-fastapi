@@ -11,7 +11,7 @@ class QueueService:
     
     def __init__(self):
         self.redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        self.queue_name = "ingestion_queue"
+        self.queue_name = settings.QUEUE_NAME
     
     def push_message(self, message: dict[str, Any]) -> bool:
         """

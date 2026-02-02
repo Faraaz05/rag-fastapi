@@ -33,5 +33,23 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: always
 
+  worker:
+    image: aws-batch-gpu-worker:latest
+    container_name: rag_worker
+    env_file:
+      - .env.worker
+    depends_on:
+      - chromadb
+      - redis
+      - postgres
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: always
+
 volumes:
   postgres_data:
