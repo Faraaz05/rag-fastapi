@@ -17,12 +17,12 @@ class Settings(BaseSettings):
         # AWS S3 Settings
     AWS_ACCESS_KEY_ID: str | None = None
     AWS_SECRET_ACCESS_KEY: str | None = None
-    AWS_DEFAULT_REGION: str = "us-east-1"
+    AWS_DEFAULT_REGION: str = "ap-south-1"
     S3_BUCKET_NAME: str | None = None
     USE_S3: bool = False
         # ChromaDB Settings
-    CHROMA_HOST: str = "localhost"
-    CHROMA_PORT: int = 8000
+    CHROMA_HOST: str = "chromadb"
+    CHROMA_PORT: int = 8001
     CHROMA_DB_PATH: str = "./unified_chroma_db"
     
     # AI API Keys (optional for basic functionality)

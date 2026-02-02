@@ -172,6 +172,32 @@ class StorageService:
                         break
                     yield chunk
 
+    def get_file_content(self, file_path: str) -> Optional[bytes]:
+        """
+        Get full file content as bytes from S3 or local storage.
+
+        Args:
+            file_path: S3 key or local file path
+
+        Returns:
+            File content as bytes, or None if not found
+        """
+        if self.use_s3:
+            try:
+                response = self.s3_client.get_object(Bucket=self.bucket_name, Key=file_path)
+                return response['Body'].read()
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchKey':
+                    return None
+                raise Exception(f"Failed to get file from S3: {str(e)}")
+        else:
+            # Local storage
+            if not os.path.exists(file_path):
+                return None
+            
+            with open(file_path, 'rb') as f:
+                return f.read()
+
     def get_file_url(self, file_path: str, expires_in: int = 3600) -> Optional[str]:
         """
         Generate a presigned URL for S3 file or return local path.
