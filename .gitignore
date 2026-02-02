@@ -44,7 +44,7 @@ data/
 data/raw/
 data/processed/
 docs/
-chroma_data
+chroma_data/
 redis_data/
 
 # ChromaDB
@@ -90,3 +90,6 @@ Thumbs.db
 
 # Terraform configs
 terraform/
+
+# GitHub workflows (if you don't want to track them)
+.github/
