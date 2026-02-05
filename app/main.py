@@ -35,6 +35,8 @@ from app.schemas import (
     FileStatusResponse,
     TranscriptUpload,
     TranscriptResponse,
+    AudioUpload,
+    AudioUploadResponse,
     QueryRequest,
     QueryResponse,
     ChatMessageRequest,
@@ -45,6 +47,7 @@ from app.schemas import (
 from app.services.storage import storage_service
 from app.services.queue import queue_service
 from app.services.transcript import process_transcript_file
+from app.services.audio import create_audio_queue_message
 from app.services.rag import quick_query, get_standalone_question, streaming_chat, query_with_filter
 
 # Database setup
@@ -917,16 +920,15 @@ def download_by_meeting_name(
     # Use the first match (should be unique per meeting name)
     db_file = db_files[0]
     
-    # Verify it's a transcript
-    is_transcript = db_file.original_filename and (
-        db_file.original_filename.endswith('.vtt') or 
-        db_file.original_filename.endswith('.txt')
-    )
+    # Verify it's a processed transcript (has JSON output)
+    # Allow both VTT/TXT files and audio/video files that have been processed
+    allowed_original_extensions = ('.vtt', '.txt', '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv')
+    is_valid_source = db_file.original_filename and db_file.original_filename.lower().endswith(allowed_original_extensions)
     
-    if not is_transcript:
+    if not is_valid_source:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File is not a transcript"
+            detail="File is not a valid transcript or audio source"
         )
     
     # Return JSON content
@@ -1007,45 +1009,124 @@ def delete_file(
         try:
             collection = chroma_client.get_collection(name=collection_name)
             
-            # Check if this is a transcript or document
+            # Determine file type
             is_transcript = db_file.processed_path and db_file.processed_path.endswith('.json')
+            audio_extensions = ('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv')
+            is_audio = db_file.original_filename and db_file.original_filename.lower().endswith(audio_extensions)
             
-            if is_transcript:
-                # For transcripts, filter by meeting_name (derived from file_path)
-                # file_path format: "transcript_{meeting_name}_{meeting_date}"
-                meeting_info = db_file.file_path.replace("transcript_", "").rsplit("_", 1)
-                if len(meeting_info) > 0:
-                    meeting_name = meeting_info[0]
+            chunks_to_delete = []
+            
+            if is_audio and is_transcript:
+                # Audio transcripts: chunk IDs follow pattern {file_id}_chunk_{index}
+                # Get all chunks and filter by file_id prefix
+                print(f"🔍 Searching ChromaDB for audio chunks with file_id: {file_id}")
+                try:
+                    all_chunks = collection.get(include=[])
+                    
+                    # Filter chunks that start with file_id
+                    for chunk_id in all_chunks['ids']:
+                        if chunk_id.startswith(f"{file_id}_chunk_"):
+                            chunks_to_delete.append(chunk_id)
+                except Exception as e:
+                    print(f"⚠️  Error getting chunks: {e}")
+                
+            elif is_transcript:
+                # VTT/Meeting transcripts: search by meeting_name
+                if db_file.file_path.startswith("transcript_"):
+                    meeting_info = db_file.file_path.replace("transcript_", "").rsplit("_", 1)
+                    if len(meeting_info) > 0:
+                        meeting_name = meeting_info[0]
+                        try:
+                            results = collection.get(
+                                where={"meeting_name": meeting_name},
+                                include=[]
+                            )
+                            chunks_to_delete = results['ids']
+                            print(f"🔍 Searching ChromaDB for meeting_name: {meeting_name}")
+                        except Exception as e:
+                            print(f"⚠️  Error searching meeting chunks: {e}")
+            else:
+                # Documents: search by document_name
+                try:
                     results = collection.get(
-                        where={"meeting_name": meeting_name},
+                        where={"document_name": db_file.original_filename},
                         include=[]
                     )
-                else:
-                    results = {'ids': []}
-            else:
-                # For documents, filter by document_name
-                results = collection.get(
-                    where={"document_name": db_file.original_filename},
-                    include=[]
-                )
+                    chunks_to_delete = results['ids']
+                    print(f"🔍 Searching ChromaDB for document_name: {db_file.original_filename}")
+                except Exception as e:
+                    print(f"⚠️  Error searching document chunks: {e}")
             
             # Delete chunks if any found
-            if results['ids']:
-                collection.delete(ids=results['ids'])
-                print(f"🗑️  Deleted {len(results['ids'])} chunks from ChromaDB for {db_file.original_filename}")
+            if chunks_to_delete:
+                collection.delete(ids=chunks_to_delete)
+                print(f"🗑️  Deleted {len(chunks_to_delete)} chunks from ChromaDB for {db_file.original_filename}")
             else:
                 print(f"⚠️  No chunks found in ChromaDB for {db_file.original_filename}")
         except Exception as e:
             print(f"⚠️  ChromaDB deletion warning: {e}")
             # Continue even if ChromaDB deletion fails
         
-        # Step 2: Delete physical file from storage
-        if db_file.file_path:
-            storage_service.delete_file(db_file.file_path)
+        # Step 2: Delete physical files from storage
+        deleted_files = []
+        
+        # For audio/video files, reconstruct the raw file path
+        # Worker changes file_path to "transcript_*" for searchability, but raw file is at projects/{project_id}/raw/{file_id}.ext
+        audio_extensions = ('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv')
+        is_audio = db_file.original_filename and db_file.original_filename.lower().endswith(audio_extensions)
+        
+        if is_audio:
+            # Reconstruct raw file path from file_id and original extension
+            from pathlib import Path
+            file_extension = Path(db_file.original_filename).suffix
+            raw_file_path = f"projects/{project_id}/raw/{file_id}{file_extension}"
+            
+            try:
+                success = storage_service.delete_file(raw_file_path)
+                if success:
+                    deleted_files.append(f"raw audio: {raw_file_path}")
+                    print(f"🗑️  Deleted raw audio: {raw_file_path}")
+                else:
+                    print(f"⚠️  Failed to delete raw audio: {raw_file_path}")
+            except Exception as e:
+                print(f"⚠️  Error deleting raw audio: {e}")
+        else:
+            # For non-audio files, use the stored file_path
+            if db_file.file_path:
+                try:
+                    success = storage_service.delete_file(db_file.file_path)
+                    if success:
+                        deleted_files.append(f"raw file: {db_file.file_path}")
+                        print(f"🗑️  Deleted raw file: {db_file.file_path}")
+                    else:
+                        print(f"⚠️  Failed to delete raw file: {db_file.file_path}")
+                except Exception as e:
+                    print(f"⚠️  Error deleting raw file: {e}")
         
         # Delete processed JSON if exists
         if db_file.processed_path:
-            storage_service.delete_file(db_file.processed_path)
+            try:
+                success = storage_service.delete_file(db_file.processed_path)
+                if success:
+                    deleted_files.append(f"processed JSON: {db_file.processed_path}")
+                    print(f"🗑️  Deleted processed JSON: {db_file.processed_path}")
+                else:
+                    print(f"⚠️  Failed to delete processed JSON: {db_file.processed_path}")
+            except Exception as e:
+                print(f"⚠️  Error deleting processed JSON: {e}")
+        
+        # Delete compressed audio file if it's an audio/video file (worker creates this)
+        if is_audio:
+            compressed_audio_path = f"projects/{project_id}/processed/{file_id}.mp3"
+            try:
+                success = storage_service.delete_file(compressed_audio_path)
+                if success:
+                    deleted_files.append(f"compressed audio: {compressed_audio_path}")
+                    print(f"🗑️  Deleted compressed audio: {compressed_audio_path}")
+                else:
+                    print(f"⚠️  Compressed audio not found (may not exist): {compressed_audio_path}")
+            except Exception as e:
+                print(f"⚠️  Error deleting compressed audio: {e}")
         
         # Step 3: Delete file record from database
         db.delete(db_file)
@@ -1189,6 +1270,111 @@ async def upload_transcript(
             detail=f"Error processing transcript: {str(e)}"
         )
 
+
+@app.post("/projects/{project_id}/audio", response_model=AudioUploadResponse, status_code=status.HTTP_202_ACCEPTED)
+async def upload_audio(
+    project_id: int,
+    file: UploadFile = FileUpload(...),
+    audio_name: str = None,
+    audio_date: str = None,
+    current_user: Annotated[User, Depends(is_project_owner)] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Upload an audio or video file for processing.
+    File is uploaded to S3 raw directory and queued for worker processing.
+    Worker will handle video-to-audio conversion, transcription with diarization, and embedding.
+    Only project owners can upload audio/video files.
+    """
+    # Validate file type - support common audio and video formats
+    allowed_extensions = (
+        '.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma',  # Audio formats
+        '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv'   # Video formats
+    )
+    if not file.filename.lower().endswith(allowed_extensions):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Only audio/video files are allowed ({', '.join(allowed_extensions)})"
+        )
+    
+    # Validate required parameters
+    if not audio_name or not audio_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="audio_name and audio_date are required"
+        )
+    
+    # Verify project exists
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    try:
+        # Save audio file to S3/local storage
+        file_info = await storage_service.save_file(project_id=project_id, file=file)
+        
+        file_id = file_info["file_id"]
+        file_path = file_info["file_path"]
+        file_size = file_info["size"]
+        
+        # Create File record in database
+        db_file = File(
+            file_id=file_id,
+            original_filename=file.filename,
+            file_path=file_path,
+            project_id=project_id,
+            size=file_size,
+            status=FileStatus.QUEUED  # Set status to QUEUED for worker processing
+        )
+        db.add(db_file)
+        db.commit()
+        db.refresh(db_file)
+        
+        # Create queue message for audio worker
+        queue_message = create_audio_queue_message(
+            file_id=file_id,
+            project_id=project_id,
+            project_name=project.name,
+            original_filename=file.filename,
+            file_path=file_path,
+            audio_name=audio_name,
+            audio_date=audio_date,
+            file_size=file_size
+        )
+        
+        # Push message to audio queue
+        queue_pushed = queue_service.push_audio_message(queue_message)
+        
+        if not queue_pushed:
+            raise Exception("Failed to push audio to processing queue")
+        
+        return AudioUploadResponse(
+            message="Audio file uploaded and queued for processing",
+            file_id=file_id,
+            original_filename=file.filename,
+            project_id=project_id,
+            size=file_size,
+            status=FileStatus.QUEUED.value,
+            audio_name=audio_name,
+            audio_date=audio_date
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Update file status to FAILED if exists
+        if 'db_file' in locals():
+            db_file.status = FileStatus.FAILED
+            db_file.error_message = str(e)
+            db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading audio file: {str(e)}"
+        )
 
 @app.post("/projects/{project_id}/query", response_model=QueryResponse)
 def query_project(

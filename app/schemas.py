@@ -117,6 +117,23 @@ class TranscriptResponse(BaseModel):
     status: str
 
 
+# Audio Upload Schemas
+class AudioUpload(BaseModel):
+    audio_name: str
+    audio_date: str  # YYYY-MM-DD format
+
+
+class AudioUploadResponse(BaseModel):
+    message: str
+    file_id: str
+    original_filename: str
+    project_id: int
+    size: int
+    status: str
+    audio_name: str
+    audio_date: str
+
+
 # Query/RAG Schemas
 class QueryRequest(BaseModel):
     question: str

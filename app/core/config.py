@@ -25,7 +25,10 @@ class Settings(BaseSettings):
     USE_SQS: bool = False
     SQS_QUEUE_URL: str | None = None
     QUEUE_NAME: str = "ingestion_queue"
-        # ChromaDB Settings
+    AUDIO_QUEUE_NAME: str = "audio_queue"
+    SQS_AUDIO_QUEUE_URL: str | None = None
+    
+    # ChromaDB Settings
     CHROMA_HOST: str = "chromadb"
     CHROMA_PORT: int = 8001
     CHROMA_DB_PATH: str = "./unified_chroma_db"

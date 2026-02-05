@@ -93,3 +93,6 @@ terraform/
 
 # GitHub workflows (if you don't want to track them)
 .github/
+
+model_cache
+torch_cache

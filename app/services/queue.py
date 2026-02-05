@@ -23,10 +23,12 @@ class QueueService:
                 aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
             )
             self.queue_url = settings.SQS_QUEUE_URL
+            self.audio_queue_url = settings.SQS_AUDIO_QUEUE_URL
         else:
             # Redis client (local development)
             self.redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
             self.queue_name = settings.QUEUE_NAME
+            self.audio_queue_name = settings.AUDIO_QUEUE_NAME
     
     def push_message(self, message: dict[str, Any]) -> bool:
         """
@@ -103,6 +105,60 @@ class QueueService:
                 return True
         except Exception:
             return False
+
+    def push_audio_message(self, message: dict[str, Any]) -> bool:
+        """
+        Push a message to the audio processing queue (SQS or Redis).
+        
+        Args:
+            message: Dictionary containing audio metadata and file info
+            
+        Returns:
+            bool: True if message was pushed successfully
+        """
+        try:
+            message_json = json.dumps(message)
+            
+            if self.use_sqs:
+                # Send to SQS audio queue
+                response = self.sqs_client.send_message(
+                    QueueUrl=self.audio_queue_url,
+                    MessageBody=message_json
+                )
+                return response.get('MessageId') is not None
+            else:
+                # Send to Redis audio queue
+                self.redis_client.rpush(self.audio_queue_name, message_json)
+                return True
+                
+        except ClientError as e:
+            print(f"Error pushing audio message to SQS: {e}")
+            return False
+        except Exception as e:
+            print(f"Error pushing audio message to queue: {e}")
+            return False
+
+    def get_audio_queue_length(self) -> int:
+        """
+        Get the current length of the audio processing queue.
+        Note: For SQS, this is an approximate count.
+        
+        Returns:
+            int: Number of messages in the audio queue
+        """
+        try:
+            if self.use_sqs:
+                # Get approximate message count from SQS
+                response = self.sqs_client.get_queue_attributes(
+                    QueueUrl=self.audio_queue_url,
+                    AttributeNames=['ApproximateNumberOfMessages']
+                )
+                return int(response['Attributes'].get('ApproximateNumberOfMessages', 0))
+            else:
+                # Get exact count from Redis
+                return self.redis_client.llen(self.audio_queue_name)
+        except Exception:
+            return 0
 
 
 # Singleton instance

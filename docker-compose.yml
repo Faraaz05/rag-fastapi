@@ -9,7 +9,7 @@ services:
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
-    restart: always
+    
 
   redis:
     image: redis:latest
@@ -18,7 +18,7 @@ services:
       - "6379:6379"
     volumes:
       - ./redis_data:/data   # Persists your queue tasks if Redis restarts
-    restart: always
+    
 
   postgres:
     image: postgres:15
@@ -36,7 +36,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: always
+    
 
   fastapi:
     build: .
@@ -52,7 +52,7 @@ services:
         condition: service_started
       redis:
         condition: service_started
-    restart: always
+    
 
   worker:
     image: aws-batch-gpu-worker:latest
@@ -70,7 +70,31 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    restart: always
+    
+  transcriber:
+    image: faster-whisper-image
+    container_name: faster-whisper
+    env_file:
+      - .env.audio
+    depends_on:
+      - chromadb
+      - redis
+      - postgres
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    volumes:
+      - ./input:/data/input
+      - ./output:/data/output
+      - ./model_cache:/root/.cache/huggingface
+      - ./torch_cache:/root/.cache/torch
+
+    
 
 volumes:
   postgres_data:
