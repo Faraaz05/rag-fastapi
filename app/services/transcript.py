@@ -280,7 +280,7 @@ def process_transcript_file(
     # Step 2: Initialize embedding model
     print(f"\n🔮 Initializing Google Gemini embedding model...")
     embedding_model = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
+        model="models/gemini-embedding-001",
         task_type="retrieval_document"
     )
     

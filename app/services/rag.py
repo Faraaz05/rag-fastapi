@@ -39,7 +39,7 @@ def query_with_filter(
     
     # Initialize embedding model for queries
     embedding_model = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
+        model="models/gemini-embedding-001",
         task_type="retrieval_query"  # Use retrieval_query for queries
     )
     

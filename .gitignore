@@ -96,3 +96,5 @@ terraform/
 
 model_cache
 torch_cache
+
+context
