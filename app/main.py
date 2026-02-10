@@ -43,6 +43,7 @@ from app.schemas import (
     ChatMessageResponse,
     ChatSessionCreate,
     ChatSessionResponse,
+    AudioStreamURLResponse,
 )
 from app.services.storage import storage_service
 from app.services.queue import queue_service
@@ -886,6 +887,197 @@ def download_transcript(
             media_type="application/json",
             filename=f"{file_id}_transcript.json"
         )
+
+
+@app.get("/projects/{project_id}/files/{file_id}/audio-stream", response_model=AudioStreamURLResponse)
+def get_audio_stream_url(
+    project_id: int,
+    file_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db),
+    expires_in: int = 3600
+):
+    """
+    Get a presigned URL for streaming the processed/compressed audio file.
+    The URL supports HTTP Range requests, allowing the frontend to:
+    - Seek to specific timestamps without downloading the entire file
+    - Stream audio progressively
+    - Jump to different positions in the audio
+    
+    Accessible by project owner and members.
+    
+    Args:
+        project_id: Project ID
+        file_id: File ID
+        expires_in: URL expiration time in seconds (default: 3600 = 1 hour)
+    
+    Returns:
+        Presigned URL for audio streaming
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Get file record
+    db_file = db.query(File).filter(
+        File.file_id == file_id,
+        File.project_id == project_id
+    ).first()
+    
+    if not db_file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    
+    # Check if this is an audio/video file
+    audio_extensions = ('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv')
+    is_audio = db_file.original_filename and db_file.original_filename.lower().endswith(audio_extensions)
+    
+    if not is_audio:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This endpoint is only for audio/video files"
+        )
+    
+    # Check if file has been processed
+    if db_file.status != FileStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Audio not ready yet. Current status: {db_file.status}"
+        )
+    
+    # Construct path to compressed MP3 file
+    # The worker saves compressed audio at: projects/{project_id}/processed/{file_id}.mp3
+    compressed_audio_path = f"projects/{project_id}/processed/{file_id}.mp3"
+    
+    # Generate presigned URL or return local path
+    if settings.USE_S3:
+        try:
+            # Generate presigned URL with specified expiration
+            presigned_url = storage_service.get_file_url(
+                file_path=compressed_audio_path,
+                expires_in=expires_in
+            )
+            
+            if not presigned_url:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Compressed audio file not found in storage"
+                )
+            
+            return AudioStreamURLResponse(
+                url=presigned_url,
+                expires_in=expires_in,
+                file_id=file_id,
+                original_filename=db_file.original_filename
+            )
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate streaming URL: {str(e)}"
+            )
+    else:
+        # For local storage, return a route that serves the file
+        # Frontend can use this route directly with HTML5 audio element
+        local_audio_path = Path(f"data/processed/{project_id}/{file_id}.mp3")
+        
+        if not local_audio_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Compressed audio file not found on disk"
+            )
+        
+        # Return a local URL that can be used for streaming
+        # The frontend will call another endpoint to actually stream the file
+        local_url = f"/projects/{project_id}/files/{file_id}/stream-local"
+        
+        return AudioStreamURLResponse(
+            url=local_url,
+            expires_in=expires_in,
+            file_id=file_id,
+            original_filename=db_file.original_filename
+        )
+
+
+@app.get("/projects/{project_id}/files/{file_id}/stream-local")
+def stream_local_audio(
+    project_id: int,
+    file_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Stream local audio file with Range request support.
+    This endpoint is only used when USE_S3 is False.
+    """
+    # Same authentication checks
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+    
+    # Get file and verify
+    db_file = db.query(File).filter(
+        File.file_id == file_id,
+        File.project_id == project_id
+    ).first()
+    
+    if not db_file or db_file.status != FileStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audio file not found or not ready"
+        )
+    
+    # Serve the local MP3 file with Range support
+    local_audio_path = Path(f"data/processed/{project_id}/{file_id}.mp3")
+    
+    if not local_audio_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audio file not found"
+        )
+    
+    # FileResponse automatically supports Range requests
+    return FileResponse(
+        path=str(local_audio_path),
+        media_type="audio/mpeg",
+        filename=f"{file_id}.mp3"
+    )
 
 
 @app.get("/projects/{project_id}/download/document/{document_name}")

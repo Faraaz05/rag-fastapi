@@ -195,3 +195,11 @@ class ChatMessageResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Audio Streaming Schema
+class AudioStreamURLResponse(BaseModel):
+    url: str
+    expires_in: int
+    file_id: str
+    original_filename: str
