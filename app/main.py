@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import os
 
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, Form
 from fastapi import File as FileUpload
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -708,17 +708,30 @@ def download_file(
             detail="File not found"
         )
     
-    # Check if this is a transcript (transcripts don't have raw files stored)
-    is_transcript = db_file.original_filename and (
+    # Check if this is a VTT/TXT transcript (these don't have raw files stored)
+    is_vtt_transcript = db_file.original_filename and (
         db_file.original_filename.endswith('.vtt') or 
         db_file.original_filename.endswith('.txt')
     )
     
-    if is_transcript:
+    if is_vtt_transcript:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Transcripts don't have downloadable raw files. Use the regular file endpoint to get JSON content."
         )
+    
+    # For audio/video files, reconstruct the raw file path
+    # Worker changes file_path to "transcript_*" but raw file is at projects/{project_id}/raw/{file_id}.ext
+    audio_extensions = ('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv')
+    is_audio = db_file.original_filename and db_file.original_filename.lower().endswith(audio_extensions)
+    
+    if is_audio:
+        # Reconstruct raw file path
+        file_extension = Path(db_file.original_filename).suffix
+        actual_file_path = f"projects/{project_id}/raw/{db_file.file_id}{file_extension}"
+    else:
+        # For documents, use the stored file_path
+        actual_file_path = db_file.file_path
     
     # Generate download URL or serve file
     if settings.USE_S3:
@@ -732,7 +745,7 @@ def download_file(
             from fastapi.responses import StreamingResponse
             
             return StreamingResponse(
-                storage_service.get_file_stream(db_file.file_path),
+                storage_service.get_file_stream(actual_file_path),
                 media_type=media_type,
                 headers={"Content-Disposition": f"attachment; filename={db_file.original_filename}"}
             )
@@ -749,7 +762,7 @@ def download_file(
     else:
         # Local file serving
         import os
-        if not db_file.file_path or not os.path.exists(db_file.file_path):
+        if not actual_file_path or not os.path.exists(actual_file_path):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="File not found on disk"
@@ -761,9 +774,117 @@ def download_file(
         
         # Return the file
         return FileResponse(
-            path=db_file.file_path,
+            path=actual_file_path,
             media_type=media_type,
             filename=db_file.original_filename
+        )
+
+
+@app.get("/projects/{project_id}/files/{file_id}/transcript")
+def download_transcript(
+    project_id: int,
+    file_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Download the transcript JSON for an audio/video file.
+    Returns the processed transcript in JSON format with turns, speakers, and timestamps.
+    Accessible by project owner and members.
+    """
+    # Check if user has access to the project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Check if user is owner or member
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this project"
+        )
+    
+    # Get file record
+    db_file = db.query(File).filter(
+        File.file_id == file_id,
+        File.project_id == project_id
+    ).first()
+    
+    if not db_file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    
+    # Check if this is an audio/video file
+    audio_extensions = ('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv')
+    is_audio = db_file.original_filename and db_file.original_filename.lower().endswith(audio_extensions)
+    
+    if not is_audio:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This endpoint is only for audio/video files. Use the document download endpoint for documents."
+        )
+    
+    # Check if file has been processed
+    if db_file.status != FileStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Transcript not ready yet. Current status: {db_file.status}"
+        )
+    
+    # Check if processed_path exists
+    if not db_file.processed_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcript not found for this file"
+        )
+    
+    # Get transcript from storage
+    if settings.USE_S3:
+        # Fetch from S3
+        try:
+            return StreamingResponse(
+                storage_service.get_file_stream(db_file.processed_path),
+                media_type="application/json",
+                headers={"Content-Disposition": f"attachment; filename={file_id}_transcript.json"}
+            )
+        except Exception as e:
+            if "File not found" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Transcript file not found in storage"
+                )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve transcript: {str(e)}"
+            )
+    else:
+        # Local file serving
+        # The processed_path for local storage is typically: data/processed/{project_id}/{file_id}.json
+        local_transcript_path = Path(f"data/processed/{project_id}/{file_id}.json")
+        
+        if not local_transcript_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transcript file not found on disk"
+            )
+        
+        # Return the JSON file
+        return FileResponse(
+            path=str(local_transcript_path),
+            media_type="application/json",
+            filename=f"{file_id}_transcript.json"
         )
 
 
@@ -1147,10 +1268,10 @@ def delete_file(
 async def upload_transcript(
     project_id: int,
     file: UploadFile = FileUpload(...),
-    meeting_name: str = None,
-    meeting_date: str = None,
-    turns_per_chunk: int = 8,
-    overlap: int = 3,
+    meeting_name: str = Form(...),
+    meeting_date: str = Form(...),
+    turns_per_chunk: int = Form(8),
+    overlap: int = Form(3),
     current_user: Annotated[User, Depends(is_project_owner)] = None,
     db: Session = Depends(get_db)
 ):
@@ -1275,8 +1396,8 @@ async def upload_transcript(
 async def upload_audio(
     project_id: int,
     file: UploadFile = FileUpload(...),
-    audio_name: str = None,
-    audio_date: str = None,
+    audio_name: str = Form(...),
+    audio_date: str = Form(...),
     current_user: Annotated[User, Depends(is_project_owner)] = None,
     db: Session = Depends(get_db)
 ):
