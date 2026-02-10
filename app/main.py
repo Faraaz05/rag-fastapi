@@ -949,10 +949,14 @@ def get_audio_stream_url(
         )
     
     # Check if this is an audio/video file
-    audio_extensions = ('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv')
-    is_audio = db_file.original_filename and db_file.original_filename.lower().endswith(audio_extensions)
+    video_extensions = ('.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv')
+    audio_only_extensions = ('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma')
+    all_extensions = video_extensions + audio_only_extensions
     
-    if not is_audio:
+    is_media = db_file.original_filename and db_file.original_filename.lower().endswith(all_extensions)
+    is_video = db_file.original_filename and db_file.original_filename.lower().endswith(video_extensions)
+    
+    if not is_media:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This endpoint is only for audio/video files"
@@ -969,6 +973,12 @@ def get_audio_stream_url(
     # The worker saves compressed audio at: projects/{project_id}/processed/{file_id}.mp3
     compressed_audio_path = f"projects/{project_id}/processed/{file_id}.mp3"
     
+    # If it's a video, also prepare the original video file path
+    video_url = None
+    if is_video:
+        file_extension = Path(db_file.original_filename).suffix
+        original_video_path = f"projects/{project_id}/raw/{file_id}{file_extension}"
+    
     # Generate presigned URL or return local path
     if settings.USE_S3:
         try:
@@ -984,11 +994,25 @@ def get_audio_stream_url(
                     detail="Compressed audio file not found in storage"
                 )
             
+            # Generate presigned URL for video if it's a video file
+            video_presigned_url = None
+            if is_video:
+                try:
+                    video_presigned_url = storage_service.get_file_url(
+                        file_path=original_video_path,
+                        expires_in=expires_in
+                    )
+                except Exception as e:
+                    # Video URL is optional, log but don't fail
+                    print(f"Warning: Could not generate video URL: {e}")
+            
             return AudioStreamURLResponse(
                 url=presigned_url,
                 expires_in=expires_in,
                 file_id=file_id,
-                original_filename=db_file.original_filename
+                original_filename=db_file.original_filename,
+                is_video=is_video,
+                video_url=video_presigned_url
             )
             
         except Exception as e:
@@ -1011,11 +1035,21 @@ def get_audio_stream_url(
         # The frontend will call another endpoint to actually stream the file
         local_url = f"/projects/{project_id}/files/{file_id}/stream-local"
         
+        # If it's a video, provide the original video URL as well
+        local_video_url = None
+        if is_video:
+            file_extension = Path(db_file.original_filename).suffix
+            local_video_path = Path(f"projects/{project_id}/raw/{file_id}{file_extension}")
+            if local_video_path.exists():
+                local_video_url = f"/projects/{project_id}/files/{file_id}/stream-local-video"
+        
         return AudioStreamURLResponse(
             url=local_url,
             expires_in=expires_in,
             file_id=file_id,
-            original_filename=db_file.original_filename
+            original_filename=db_file.original_filename,
+            is_video=is_video,
+            video_url=local_video_url
         )
 
 
@@ -1077,6 +1111,82 @@ def stream_local_audio(
         path=str(local_audio_path),
         media_type="audio/mpeg",
         filename=f"{file_id}.mp3"
+    )
+
+
+@app.get("/projects/{project_id}/files/{file_id}/stream-local-video")
+def stream_local_video(
+    project_id: int,
+    file_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Session = Depends(get_db)
+):
+    """
+    Stream local video file with Range request support.
+    This endpoint is only used when USE_S3 is False and the file is a video.
+    """
+    # Same authentication checks
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    is_member = db.execute(
+        project_members.select().where(
+            (project_members.c.user_id == current_user.id) &
+            (project_members.c.project_id == project_id)
+        )
+    ).first()
+    
+    if project.owner_id != current_user.id and not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+    
+    # Get file and verify
+    db_file = db.query(File).filter(
+        File.file_id == file_id,
+        File.project_id == project_id
+    ).first()
+    
+    if not db_file or db_file.status != FileStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Video file not found or not ready"
+        )
+    
+    # Verify it's a video file
+    video_extensions = ('.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv')
+    is_video = db_file.original_filename and db_file.original_filename.lower().endswith(video_extensions)
+    
+    if not is_video:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This endpoint is only for video files"
+        )
+    
+    # Serve the original video file with Range support
+    file_extension = Path(db_file.original_filename).suffix
+    local_video_path = Path(f"projects/{project_id}/raw/{file_id}{file_extension}")
+    
+    if not local_video_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Video file not found"
+        )
+    
+    # Determine media type based on extension
+    import mimetypes
+    media_type = mimetypes.guess_type(db_file.original_filename)[0] or "video/mp4"
+    
+    # FileResponse automatically supports Range requests
+    return FileResponse(
+        path=str(local_video_path),
+        media_type=media_type,
+        filename=db_file.original_filename
     )
 
 

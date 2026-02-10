@@ -203,3 +203,5 @@ class AudioStreamURLResponse(BaseModel):
     expires_in: int
     file_id: str
     original_filename: str
+    is_video: bool
+    video_url: Optional[str] = None
