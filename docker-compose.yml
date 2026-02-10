@@ -55,7 +55,7 @@ services:
     
 
   worker:
-    image: aws-batch-gpu-worker:latest
+    image: pdf-worker:latest
     container_name: rag_worker
     env_file:
       - .env.worker
@@ -70,6 +70,8 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    volumes:
+      - ./unstructured_cache:/root/.cache/huggingface
     
   transcriber:
     image: faster-whisper-image
