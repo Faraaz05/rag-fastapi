@@ -8,13 +8,14 @@ Base = declarative_base()
 
 # File status enum
 class FileStatus(str, enum.Enum):
-    UPLOADED = "uploaded"
-    QUEUED = "queued"
-    PARTITIONING = "partitioning"
-    EMBEDDING = "embedding"
-    INDEXING = "indexing"
-    COMPLETED = "completed"
-    FAILED = "failed"
+    UPLOADING = "UPLOADING"
+    UPLOADED = "UPLOADED"
+    QUEUED = "QUEUED"
+    PARTITIONING = "PARTITIONING"
+    EMBEDDING = "EMBEDDING"
+    INDEXING = "INDEXING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 # Many-to-many association table for Project Members
 project_members = Table(

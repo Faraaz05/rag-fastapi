@@ -422,8 +422,12 @@ async def upload_file(
     """
     Upload multiple files to a project. Only project owner can upload.
     Accepts PDF and DOCX files. DOCX files will be converted to PDF automatically.
-    The files are saved locally and messages are sent to the ingestion queue.
+    The files are saved asynchronously and messages are sent to the ingestion queue.
     """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    import uuid
+    
     allowed_extensions = {".pdf", ".docx"}
     responses = []
     
@@ -436,54 +440,114 @@ async def upload_file(
                 detail=f"File type not supported for {file.filename}. Allowed types: PDF, DOCX"
             )
         
-        # Save file to local storage
-        file_info = await storage_service.save_file(project_id, file)
+        # Generate file_id immediately
+        file_id = str(uuid.uuid4())
         
-        # Create file record in database
-        db_file = File(
-            file_id=file_info["file_id"],
-            project_id=project_id,
-            original_filename=file_info["original_filename"],
-            file_path=file_info["file_path"],
-            size=file_info["size"],
-            status=FileStatus.QUEUED  # Set to QUEUED when pushing to Redis
-        )
-        db.add(db_file)
-        db.commit()
-        db.refresh(db_file)
+        # Create DB record FIRST with UPLOADING status so user can see it immediately
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as pool:
+            db_file = await loop.run_in_executor(
+                pool,
+                lambda: _create_uploading_file_record(db, file_id, file.filename, project_id)
+            )
         
-        # Prepare job message for the worker
-        job = {
-            "project_id": str(project_id),
-            "file_id": file_info["file_id"],
-            "s3_key": file_info["file_path"],  # This is the S3 key or local path
-            "original_filename": file_info["original_filename"],
-            "bucket_name": settings.S3_BUCKET_NAME,
-        }
-
-        # Push job to the ingestion queue
         try:
-            success = queue_service.push_message(job)
-            if not success:
-                raise Exception("Failed to push message to queue")
-            message = "File uploaded successfully and queued for processing"
+            # Save file to storage asynchronously (already uses chunked uploads)
+            file_info = await storage_service.save_file(project_id, file, file_id)
+            
+            # Update file record with upload details
+            with ThreadPoolExecutor() as pool:
+                await loop.run_in_executor(
+                    pool,
+                    lambda: _update_file_after_upload(db, db_file, file_info)
+                )
+            
+            # Prepare job message for the worker
+            job = {
+                "project_id": str(project_id),
+                "file_id": file_info["file_id"],
+                "s3_key": file_info["file_path"],  # This is the S3 key or local path
+                "original_filename": file_info["original_filename"],
+                "bucket_name": settings.S3_BUCKET_NAME,
+            }
+
+            # Push job to the ingestion queue (run in thread pool)
+            try:
+                with ThreadPoolExecutor() as pool:
+                    success = await loop.run_in_executor(
+                        pool,
+                        lambda: queue_service.push_message(job)
+                    )
+                if not success:
+                    raise Exception("Failed to push message to queue")
+                message = "File uploaded successfully and queued for processing"
+            except Exception as e:
+                # Update status to FAILED if queue push fails (run in thread pool)
+                with ThreadPoolExecutor() as pool:
+                    await loop.run_in_executor(
+                        pool,
+                        lambda: _update_file_status_failed(db, db_file, str(e))
+                    )
+                message = f"File uploaded but failed to queue for processing: {str(e)}"
+            
+            responses.append(UploadResponse(
+                message=message,
+                file_id=file_info["file_id"],
+                original_filename=file_info["original_filename"],
+                project_id=project_id,
+                size=file_info["size"],
+                status=db_file.status.value
+            ))
+            
         except Exception as e:
-            # Update status to FAILED if queue push fails
-            db_file.status = FileStatus.FAILED
-            db_file.error_message = f"Failed to queue for processing: {str(e)}"
-            db.commit()
-            message = f"File uploaded but failed to queue for processing: {db_file.error_message}"
-        
-        responses.append(UploadResponse(
-            message=message,
-            file_id=file_info["file_id"],
-            original_filename=file_info["original_filename"],
-            project_id=project_id,
-            size=file_info["size"],
-            status=db_file.status.value
-        ))
+            # Handle file upload errors
+            with ThreadPoolExecutor() as pool:
+                await loop.run_in_executor(
+                    pool,
+                    lambda: _update_file_status_failed(db, db_file, str(e))
+                )
+            responses.append(UploadResponse(
+                message=f"File upload failed: {str(e)}",
+                file_id=file_id,
+                original_filename=file.filename,
+                project_id=project_id,
+                size=0,
+                status=FileStatus.FAILED.value
+            ))
     
     return responses
+
+
+# Helper functions for thread pool execution
+def _create_uploading_file_record(db: Session, file_id: str, filename: str, project_id: int) -> File:
+    """Create file record with UPLOADING status (for thread pool execution)."""
+    db_file = File(
+        file_id=file_id,
+        project_id=project_id,
+        original_filename=filename,
+        file_path="",  # Will be updated after upload
+        size=0,  # Will be updated after upload
+        status=FileStatus.UPLOADING
+    )
+    db.add(db_file)
+    db.commit()
+    db.refresh(db_file)
+    return db_file
+
+
+def _update_file_after_upload(db: Session, db_file: File, file_info: dict):
+    """Update file record after upload completes (for thread pool execution)."""
+    db_file.file_path = file_info["file_path"]
+    db_file.size = file_info["size"]
+    db_file.status = FileStatus.QUEUED
+    db.commit()
+
+
+def _update_file_status_failed(db: Session, db_file: File, error_msg: str):
+    """Update file status to failed (for thread pool execution)."""
+    db_file.status = FileStatus.FAILED
+    db_file.error_message = f"Failed to queue for processing: {error_msg}"
+    db.commit()
 
 
 @app.get("/projects/{project_id}/files/{file_id}/status", response_model=FileStatusResponse)
@@ -1705,10 +1769,13 @@ async def upload_audio(
 ):
     """
     Upload an audio or video file for processing.
-    File is uploaded to S3 raw directory and queued for worker processing.
+    File is uploaded asynchronously to S3/local storage and queued for worker processing.
     Worker will handle video-to-audio conversion, transcription with diarization, and embedding.
     Only project owners can upload audio/video files.
     """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    
     # Validate file type - support common audio and video formats
     allowed_extensions = (
         '.mp3', '.wav', '.m4a', '.flac', '.ogg', '.aac', '.wma',  # Audio formats
@@ -1736,25 +1803,30 @@ async def upload_audio(
         )
     
     try:
-        # Save audio file to S3/local storage
-        file_info = await storage_service.save_file(project_id=project_id, file=file)
+        # Generate file_id immediately
+        import uuid
+        file_id = str(uuid.uuid4())
         
-        file_id = file_info["file_id"]
+        # Create DB record FIRST with UPLOADING status
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as pool:
+            db_file = await loop.run_in_executor(
+                pool,
+                lambda: _create_uploading_file_record(db, file_id, file.filename, project_id)
+            )
+        
+        # Save audio file asynchronously (uses chunked uploads)
+        file_info = await storage_service.save_file(project_id=project_id, file=file, file_id=file_id)
+        
         file_path = file_info["file_path"]
         file_size = file_info["size"]
         
-        # Create File record in database
-        db_file = File(
-            file_id=file_id,
-            original_filename=file.filename,
-            file_path=file_path,
-            project_id=project_id,
-            size=file_size,
-            status=FileStatus.QUEUED  # Set status to QUEUED for worker processing
-        )
-        db.add(db_file)
-        db.commit()
-        db.refresh(db_file)
+        # Update file record after upload completes
+        with ThreadPoolExecutor() as pool:
+            await loop.run_in_executor(
+                pool,
+                lambda: _update_file_after_upload(db, db_file, file_info)
+            )
         
         # Create queue message for audio worker
         queue_message = create_audio_queue_message(
@@ -1768,8 +1840,12 @@ async def upload_audio(
             file_size=file_size
         )
         
-        # Push message to audio queue
-        queue_pushed = queue_service.push_audio_message(queue_message)
+        # Push message to audio queue (run in thread pool)
+        with ThreadPoolExecutor() as pool:
+            queue_pushed = await loop.run_in_executor(
+                pool,
+                lambda: queue_service.push_audio_message(queue_message)
+            )
         
         if not queue_pushed:
             raise Exception("Failed to push audio to processing queue")

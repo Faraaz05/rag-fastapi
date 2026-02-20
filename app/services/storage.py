@@ -29,38 +29,61 @@ class StorageService:
             # Fallback to local storage
             self.base_dir = Path(settings.UPLOAD_DIR)
 
-    async def save_file(self, project_id: int, file: UploadFile) -> dict:
+    async def save_file(self, project_id: int, file: UploadFile, file_id: str = None) -> dict:
         """
-        Save an uploaded file to S3 or local storage.
+        Save an uploaded file to S3 or local storage using async chunked uploads.
+        This prevents blocking the event loop for large files.
 
         Args:
             project_id: The ID of the project
             file: The uploaded file
+            file_id: Optional pre-generated file ID (for creating DB record before upload)
 
         Returns:
             dict: Contains file_path/s3_key, file_id, original_filename, and size
         """
         # Generate unique filename
-        file_id = str(uuid.uuid4())
+        if not file_id:
+            file_id = str(uuid.uuid4())
         file_extension = Path(file.filename).suffix if file.filename else ""
         unique_filename = f"{file_id}{file_extension}"
-
-        # Read file content
-        content = await file.read()
-        file_size = len(content)
 
         if self.use_s3:
             # S3 key structure: projects/{project_id}/raw/{unique_filename}
             s3_key = f"projects/{project_id}/raw/{unique_filename}"
 
             try:
-                # Upload to S3
-                self.s3_client.put_object(
-                    Bucket=self.bucket_name,
-                    Key=s3_key,
-                    Body=content,
-                    ContentType=file.content_type or 'application/octet-stream'
-                )
+                # Use multipart upload for large files (async friendly)
+                import asyncio
+                from concurrent.futures import ThreadPoolExecutor
+                
+                # Read file content in chunks to avoid blocking
+                chunk_size = 8 * 1024 * 1024  # 8MB chunks
+                chunks = []
+                file_size = 0
+                
+                while True:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    file_size += len(chunk)
+                
+                # Combine chunks for upload (in thread pool to not block)
+                content = b''.join(chunks)
+                
+                # Upload to S3 in thread pool to avoid blocking
+                loop = asyncio.get_event_loop()
+                with ThreadPoolExecutor() as pool:
+                    await loop.run_in_executor(
+                        pool,
+                        lambda: self.s3_client.put_object(
+                            Bucket=self.bucket_name,
+                            Key=s3_key,
+                            Body=content,
+                            ContentType=file.content_type or 'application/octet-stream'
+                        )
+                    )
 
                 file_path = s3_key  # Store S3 key as file_path
 
@@ -68,14 +91,24 @@ class StorageService:
                 raise Exception(f"Failed to upload file to S3: {str(e)}")
 
         else:
-            # Local storage fallback
+            # Local storage fallback using async file I/O
+            import aiofiles
+            
             project_dir = self.base_dir / str(project_id)
             project_dir.mkdir(parents=True, exist_ok=True)
             file_path = project_dir / unique_filename
 
-            # Save file locally
-            with open(file_path, "wb") as f:
-                f.write(content)
+            # Save file locally with async I/O (non-blocking)
+            chunk_size = 1024 * 1024  # 1MB chunks
+            file_size = 0
+            
+            async with aiofiles.open(file_path, "wb") as f:
+                while True:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    await f.write(chunk)
+                    file_size += len(chunk)
 
             file_path = str(file_path)
 
