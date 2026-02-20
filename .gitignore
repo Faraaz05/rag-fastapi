@@ -88,8 +88,9 @@ dmypy.json
 .DS_Store
 Thumbs.db
 
-# Terraform configs
-terraform/
+.terraform*
+terraform.tfstate*
+terraform/terraform.tfvars
 
 # GitHub workflows (if you don't want to track them)
 .github/
