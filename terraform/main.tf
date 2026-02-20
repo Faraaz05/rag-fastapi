@@ -343,6 +343,7 @@ resource "aws_vpc_security_group_ingress_rule" "rds-from-fastapi" {
   referenced_security_group_id = aws_security_group.fastapi-ecs-sg.id
 }
 
+
 resource "aws_vpc_security_group_ingress_rule" "rds-from-gpu-worker" {
   security_group_id = aws_security_group.rds-sg.id
 
@@ -566,4 +567,320 @@ output "rds_endpoint" {
 output "rds_address" {
   value       = aws_db_instance.postgres.address
   description = "RDS hostname"
+}
+
+# ------------------------------------
+# IAM ROLES - ECS TASK EXECUTION
+# ------------------------------------
+
+# ECS Task Execution Role (used by ECS service to pull images, write logs)
+resource "aws_iam_role" "ecs_task_execution_role" {
+  name = "${var.project_name}-ecs-task-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name    = "${var.project_name}-ecs-task-execution-role"
+    Project = var.project_name
+  }
+}
+
+# Attach AWS managed policy for ECS task execution
+resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
+  role       = aws_iam_role.ecs_task_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# Allow ECS task execution role to read secrets from Secrets Manager
+resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
+  name = "${var.project_name}-ecs-secrets-policy"
+  role = aws_iam_role.ecs_task_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = "arn:aws:secretsmanager:${var.aws_region}:*:secret:${var.project_name}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "secretsmanager.${var.aws_region}.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+# Output the role ARN (needed for task definitions)
+output "ecs_task_execution_role_arn" {
+  value       = aws_iam_role.ecs_task_execution_role.arn
+  description = "ARN of ECS task execution role"
+}
+
+
+
+# ------------------------------------
+# IAM ROLE - FASTAPI TASK
+# ------------------------------------
+
+# FastAPI Task Role (used by FastAPI container at runtime)
+resource "aws_iam_role" "fastapi_task_role" {
+  name = "${var.project_name}-fastapi-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name    = "${var.project_name}-fastapi-task-role"
+    Project = var.project_name
+  }
+}
+
+# FastAPI permissions: S3, SQS write
+resource "aws_iam_role_policy" "fastapi_task_policy" {
+  name = "${var.project_name}-fastapi-policy"
+  role = aws_iam_role.fastapi_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "${aws_s3_bucket.vector_trace_storage.arn}",
+          "${aws_s3_bucket.vector_trace_storage.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage",
+          "sqs:GetQueueUrl",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = [
+          aws_sqs_queue.document_queue.arn,
+          aws_sqs_queue.audio_queue.arn
+        ]
+      }
+    ]
+  })
+}
+
+# Output FastAPI task role ARN
+output "fastapi_task_role_arn" {
+  value       = aws_iam_role.fastapi_task_role.arn
+  description = "ARN of FastAPI task role"
+}
+
+# ------------------------------------
+# IAM ROLE - CHROMADB TASK
+# ------------------------------------
+
+# ChromaDB Task Role (minimal permissions - no AWS service access needed)
+resource "aws_iam_role" "chromadb_task_role" {
+  name = "${var.project_name}-chromadb-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name    = "${var.project_name}-chromadb-task-role"
+    Project = var.project_name
+  }
+}
+
+# No additional policies needed - ChromaDB only needs EFS mount (handled by ECS)
+
+# Output ChromaDB task role ARN
+output "chromadb_task_role_arn" {
+  value       = aws_iam_role.chromadb_task_role.arn
+  description = "ARN of ChromaDB task role"
+}
+
+
+# ------------------------------------
+# IAM ROLE - PDF WORKER TASK
+# ------------------------------------
+
+# PDF Worker Task Role (used by document processing container)
+resource "aws_iam_role" "pdf_worker_task_role" {
+  name = "${var.project_name}-pdf-worker-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name    = "${var.project_name}-pdf-worker-task-role"
+    Project = var.project_name
+  }
+}
+
+# PDF Worker permissions: S3, SQS read/delete
+resource "aws_iam_role_policy" "pdf_worker_task_policy" {
+  name = "${var.project_name}-pdf-worker-policy"
+  role = aws_iam_role.pdf_worker_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "${aws_s3_bucket.vector_trace_storage.arn}",
+          "${aws_s3_bucket.vector_trace_storage.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ChangeMessageVisibility"
+        ]
+        Resource = aws_sqs_queue.document_queue.arn
+      }
+    ]
+  })
+}
+
+# Output PDF worker task role ARN
+output "pdf_worker_task_role_arn" {
+  value       = aws_iam_role.pdf_worker_task_role.arn
+  description = "ARN of PDF worker task role"
+}
+
+# ------------------------------------
+# IAM ROLE - AUDIO WORKER TASK
+# ------------------------------------
+
+# Audio Worker Task Role (used by audio/video processing container)
+resource "aws_iam_role" "audio_worker_task_role" {
+  name = "${var.project_name}-audio-worker-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name    = "${var.project_name}-audio-worker-task-role"
+    Project = var.project_name
+  }
+}
+
+# Audio Worker permissions: S3, SQS read/delete
+resource "aws_iam_role_policy" "audio_worker_task_policy" {
+  name = "${var.project_name}-audio-worker-policy"
+  role = aws_iam_role.audio_worker_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "${aws_s3_bucket.vector_trace_storage.arn}",
+          "${aws_s3_bucket.vector_trace_storage.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ChangeMessageVisibility"
+        ]
+        Resource = aws_sqs_queue.audio_queue.arn
+      }
+    ]
+  })
+}
+
+# Output Audio worker task role ARN
+output "audio_worker_task_role_arn" {
+  value       = aws_iam_role.audio_worker_task_role.arn
+  description = "ARN of Audio worker task role"
 }
