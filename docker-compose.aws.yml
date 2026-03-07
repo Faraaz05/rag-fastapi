@@ -11,33 +11,6 @@ services:
       - ANONYMIZED_TELEMETRY=FALSE
     
 
-  redis:
-    image: redis:latest
-    container_name: redis_queue
-    ports:
-      - "6379:6379"
-    volumes:
-      - ./redis_data:/data   # Persists your queue tasks if Redis restarts
-    
-
-  postgres:
-    image: postgres:15
-    container_name: postgres_db
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    
-
   fastapi:
     build: .
     container_name: rag_fastapi
@@ -46,11 +19,8 @@ services:
     env_file:
       - .env
     depends_on:
-      # Removed postgres dependency when using RDS
-      chromadb:
-        condition: service_started
-      redis:
-        condition: service_started
+      - chromadb
+    restart: unless-stopped
     
 
   worker:
@@ -60,8 +30,6 @@ services:
       - .env.worker
     depends_on:
       - chromadb
-      - redis
-      - postgres
     deploy:
       resources:
         reservations:
@@ -71,6 +39,7 @@ services:
               capabilities: [gpu]
     volumes:
       - ./unstructured_cache:/root/.cache/huggingface
+    restart: unless-stopped
     
   transcriber:
     image: faster-whisper-image
@@ -79,8 +48,6 @@ services:
       - .env.audio
     depends_on:
       - chromadb
-      - redis
-      - postgres
     deploy:
       resources:
         reservations:
@@ -88,14 +55,9 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-
     volumes:
       - ./input:/data/input
       - ./output:/data/output
       - ./model_cache:/root/.cache/huggingface
       - ./torch_cache:/root/.cache/torch
-
-    
-
-volumes:
-  postgres_data:
+    restart: unless-stopped

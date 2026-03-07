@@ -38,7 +38,7 @@ def inspect_all_chunks(collection_name: str, show_full_content: bool = False, ex
         print(f"\n🔌 Connecting to ChromaDB at {settings.CHROMA_HOST}:{settings.CHROMA_PORT}...")
         client = chromadb.HttpClient(
             host="localhost",
-            port=8001
+            port=8000
         )
         
         # Test connection

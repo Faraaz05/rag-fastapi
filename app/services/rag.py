@@ -4,6 +4,8 @@ Ports logic from unified_query_pipeline.ipynb for FastAPI integration.
 """
 import json
 import re
+import logging
+import traceback
 from typing import List, Dict, Optional, AsyncGenerator
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
@@ -11,6 +13,10 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 import chromadb
 from ..core.config import settings
+
+# Configure logger
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 def query_with_filter(
@@ -31,48 +37,112 @@ def query_with_filter(
     Returns:
         List of retrieved chunks with metadata
     """
-    # Connect to ChromaDB
-    chroma_client = chromadb.HttpClient(
-        host=settings.CHROMA_HOST,
-        port=settings.CHROMA_PORT
-    )
-    
-    # Initialize embedding model for queries
-    embedding_model = GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001",
-        task_type="retrieval_query"  # Use retrieval_query for queries
-    )
-    
-    # Get collection
     collection_name = f"project_{project_id}"
+    logger.info(f"🔍 Starting query_with_filter for collection: {collection_name}")
+    logger.info(f"   Question: {question[:100]}...")
+    logger.info(f"   Filter: {filter_type}, Top K: {top_k}")
     
     try:
-        # Create LangChain Chroma wrapper
-        vectorstore = Chroma(
-            client=chroma_client,
-            collection_name=collection_name,
-            embedding_function=embedding_model
+        # Step 1: Connect to ChromaDB
+        logger.info(f"📡 Connecting to ChromaDB at {settings.CHROMA_HOST}:{settings.CHROMA_PORT}")
+        chroma_client = chromadb.HttpClient(
+            host=settings.CHROMA_HOST,
+            port=settings.CHROMA_PORT
         )
+        logger.info("✅ ChromaDB HttpClient created successfully")
         
-        # Build search kwargs
+        # Step 2: Test connection
+        try:
+            heartbeat = chroma_client.heartbeat()
+            logger.info(f"✅ ChromaDB heartbeat: {heartbeat}")
+        except Exception as conn_e:
+            logger.error(f"❌ ChromaDB connection test failed: {conn_e}")
+            logger.error(traceback.format_exc())
+            raise
+        
+        # Step 3: Verify collection exists
+        try:
+            collections = chroma_client.list_collections()
+            collection_names = [c.name for c in collections]
+            logger.info(f"📋 Available collections: {collection_names}")
+            
+            if collection_name not in collection_names:
+                logger.error(f"❌ Collection '{collection_name}' not found!")
+                raise ValueError(f"Collection '{collection_name}' does not exist")
+            
+            logger.info(f"✅ Collection '{collection_name}' exists")
+        except Exception as coll_e:
+            logger.error(f"❌ Collection verification failed: {coll_e}")
+            logger.error(traceback.format_exc())
+            raise
+        
+        # Step 4: Initialize embedding model
+        logger.info("🧮 Initializing GoogleGenerativeAIEmbeddings...")
+        try:
+            embedding_model = GoogleGenerativeAIEmbeddings(
+                model="models/gemini-embedding-001",
+                task_type="retrieval_query"
+            )
+            logger.info("✅ GoogleGenerativeAIEmbeddings initialized successfully")
+        except Exception as emb_e:
+            logger.error(f"❌ Embedding model initialization failed: {emb_e}")
+            logger.error("   This usually means GOOGLE_API_KEY is missing or invalid")
+            logger.error(traceback.format_exc())
+            raise
+        
+        # Step 5: Create LangChain Chroma wrapper
+        logger.info("🔗 Creating LangChain Chroma vectorstore wrapper...")
+        try:
+            vectorstore = Chroma(
+                client=chroma_client,
+                collection_name=collection_name,
+                embedding_function=embedding_model
+            )
+            logger.info("✅ Vectorstore wrapper created successfully")
+        except Exception as vs_e:
+            logger.error(f"❌ Vectorstore creation failed: {vs_e}")
+            logger.error(traceback.format_exc())
+            raise
+        
+        # Step 6: Build search kwargs and apply filters
         search_kwargs = {"k": top_k}
         
-        # Apply filter based on type
         if filter_type == "document":
             search_kwargs["filter"] = {"source_type": "document"}
+            logger.info("📄 Filter applied: documents only")
         elif filter_type == "transcript":
             search_kwargs["filter"] = {"source_type": "meeting_transcript"}
-        # "unified" means no filter - retrieve from all sources
+            logger.info("🎤 Filter applied: transcripts only")
+        else:
+            logger.info("🌐 No filter applied: unified search")
         
-        # Create retriever and query
-        retriever = vectorstore.as_retriever(search_kwargs=search_kwargs)
-        retrieved_chunks = retriever.invoke(question)
-        
-        return retrieved_chunks
+        # Step 7: Create retriever and execute query
+        logger.info("🔎 Creating retriever and executing query...")
+        try:
+            retriever = vectorstore.as_retriever(search_kwargs=search_kwargs)
+            logger.info("✅ Retriever created")
+            
+            retrieved_chunks = retriever.invoke(question)
+            logger.info(f"✅ Query executed successfully! Retrieved {len(retrieved_chunks)} chunks")
+            
+            # Log sample metadata from first chunk
+            if retrieved_chunks:
+                first_chunk = retrieved_chunks[0]
+                logger.info(f"   First chunk metadata: {first_chunk.metadata}")
+                logger.info(f"   First chunk content preview: {first_chunk.page_content[:100]}...")
+            
+            return retrieved_chunks
+            
+        except Exception as query_e:
+            logger.error(f"❌ Query execution failed: {query_e}")
+            logger.error(traceback.format_exc())
+            raise
         
     except Exception as e:
-        print(f"❌ Query error: {e}")
-        return []
+        logger.error(f"❌ query_with_filter failed with error: {e}")
+        logger.error(f"   Error type: {type(e).__name__}")
+        logger.error(f"   Full traceback:\n{traceback.format_exc()}")
+        raise  # Re-raise to let the endpoint handler catch it
 
 
 def format_answer_with_citations(answer_text: str, chunks_metadata: Dict) -> str:
@@ -191,11 +261,21 @@ def generate_answer(chunks: List, question: str) -> Dict:
         Dictionary with answer, raw_answer, chunks_metadata, and citations
     """
     try:
-        llm = ChatGroq(
-            model_name="meta-llama/llama-4-scout-17b-16e-instruct",
-            temperature=0,
-            max_tokens=4096
-        )
+        logger.info(f"📝 generate_answer called with {len(chunks)} chunks")
+        
+        # Initialize LLM
+        logger.info("🤖 Initializing ChatGroq LLM...")
+        try:
+            llm = ChatGroq(
+                model_name="meta-llama/llama-4-scout-17b-16e-instruct",
+                temperature=0,
+                max_tokens=4096
+            )
+            logger.info("✅ ChatGroq LLM initialized")
+        except Exception as llm_e:
+            logger.error(f"❌ LLM initialization failed: {llm_e}")
+            logger.error(traceback.format_exc())
+            raise
         
         context_parts = []
         all_images = []
@@ -290,19 +370,33 @@ ANSWER (with [CITE:X] citations AFTER The end of the answer to summarize transcr
         message_content = [{"type": "text", "text": instruction_prompt}]
         
         # Add images from document chunks (transcripts don't have images)
+        logger.info(f"🖼️  Adding {min(len(all_images), 5)} images to context")
         for img_b64 in all_images[:5]:
             message_content.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
             })
         
-        response = llm.invoke([HumanMessage(content=message_content)])
+        logger.info(f"📤 Invoking LLM with {len(message_content)} content parts...")
+        logger.info(f"   Context length: {len(final_context)} chars")
+        logger.info(f"   Question: {question[:100]}...")
+        
+        try:
+            response = llm.invoke([HumanMessage(content=message_content)])
+            logger.info(f"✅ LLM response received ({len(response.content)} chars)")
+        except Exception as invoke_e:
+            logger.error(f"❌ LLM invoke failed: {invoke_e}")
+            logger.error(traceback.format_exc())
+            raise
         
         # Format answer with citations
+        logger.info("🔄 Formatting answer with citations...")
         formatted_answer = format_answer_with_citations(response.content, chunks_metadata)
         
         # Extract citation metadata
+        logger.info("📋 Extracting citation metadata...")
         citations = extract_citations_metadata(response.content, chunks_metadata)
+        logger.info(f"✅ Extracted {len(citations)} citations")
         
         return {
             "answer": formatted_answer,
@@ -312,7 +406,9 @@ ANSWER (with [CITE:X] citations AFTER The end of the answer to summarize transcr
         }
         
     except Exception as e:
-        print(f"❌ Generation failed: {e}")
+        logger.error(f"❌ generate_answer failed: {e}")
+        logger.error(f"   Error type: {type(e).__name__}")
+        logger.error(f"   Full traceback:\n{traceback.format_exc()}")
         return {
             "answer": f"Error generating response: {str(e)}",
             "raw_answer": "",
@@ -339,41 +435,59 @@ def quick_query(
     Returns:
         Dictionary with answer and sources
     """
-    print("=" * 80)
-    print("🚀 UNIFIED QUERY PIPELINE")
-    print("=" * 80)
-    print(f"🔍 Query: {question}")
-    print(f"📊 Filter: {filter_type}")
-    print(f"📦 Top K: {top_k}")
+    logger.info("=" * 80)
+    logger.info("🚀 UNIFIED QUERY PIPELINE")
+    logger.info("=" * 80)
+    logger.info(f"🔍 Query: {question}")
+    logger.info(f"📊 Filter: {filter_type}")
+    logger.info(f"📦 Top K: {top_k}")
+    logger.info(f"🆔 Project ID: {project_id}")
     
-    # Step 1: Retrieve chunks
-    retrieved_chunks = query_with_filter(
-        question=question,
-        project_id=project_id,
-        top_k=top_k,
-        filter_type=filter_type
-    )
-    
-    if not retrieved_chunks:
+    try:
+        # Step 1: Retrieve chunks
+        logger.info("\n📥 STEP 1: Retrieving chunks from ChromaDB...")
+        retrieved_chunks = query_with_filter(
+            question=question,
+            project_id=project_id,
+            top_k=top_k,
+            filter_type=filter_type
+        )
+        
+        if not retrieved_chunks:
+            logger.warning("⚠️ No chunks retrieved from ChromaDB")
+            return {
+                "answer": "No relevant information found in the database.",
+                "sources": []
+            }
+        
+        logger.info(f"✅ Retrieved {len(retrieved_chunks)} chunks")
+        logger.info(f"   Chunk sources: {[c.metadata.get('source_type', 'unknown') for c in retrieved_chunks]}")
+        
+        # Step 2: Generate answer
+        logger.info("\n🤖 STEP 2: Generating answer with Llama 4 Scout...")
+        try:
+            result = generate_answer(retrieved_chunks, question)
+            logger.info("✅ Answer generated successfully")
+            logger.info(f"   Answer length: {len(result.get('raw_answer', ''))} chars")
+            logger.info(f"   Citations count: {len(result.get('citations', []))}")
+        except Exception as gen_e:
+            logger.error(f"❌ Answer generation failed: {gen_e}")
+            logger.error(traceback.format_exc())
+            raise
+        
+        logger.info("=" * 80)
+        
         return {
-            "answer": "No relevant information found in the database.",
-            "sources": []
+            "answer": result["raw_answer"],
+            "sources": result["citations"],
+            "chunks_metadata": result["chunks_metadata"]
         }
-    
-    print(f"✅ Retrieved {len(retrieved_chunks)} chunks")
-    
-    # Step 2: Generate answer
-    print(f"🤖 Generating answer with Llama 4 Scout...")
-    result = generate_answer(retrieved_chunks, question)
-    
-    print("✅ Answer generated")
-    print("=" * 80)
-    
-    return {
-        "answer": result["raw_answer"],  # Return raw LLM output with [CITE:X] markers
-        "sources": result["citations"],
-        "chunks_metadata": result["chunks_metadata"]  # Include metadata for frontend formatting
-    }
+        
+    except Exception as e:
+        logger.error(f"\n❌ quick_query FAILED: {e}")
+        logger.error(f"   Error type: {type(e).__name__}")
+        logger.error(f"   Full traceback:\n{traceback.format_exc()}")
+        raise  # Re-raise to propagate to endpoint
 
 
 def get_standalone_question(question: str, history: List[Dict[str, str]]) -> str:

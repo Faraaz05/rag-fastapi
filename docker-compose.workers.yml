@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  pdf-worker:
+    image: pdf-worker:latest
+    container_name: pdf_worker
+    env_file:
+      - .env.worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      redis:
+        condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./data/raw:/data/raw
+      - ./data/processed:/data/processed
+      - ./unstructured_cache:/root/.cache/huggingface
+      - ./input:/data/input
+      - ./output:/data/output
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+    restart: unless-stopped
+    
+
+  faster-whisper:
+    image: faster-whisper:latest
+    container_name: faster_whisper_worker
+    env_file:
+      - .env.audio
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      redis:
+        condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./data/raw:/data/raw
+      - ./data/processed:/data/processed
+      - ./input:/data/input
+      - ./output:/data/output
+      - ./model_cache:/root/.cache/huggingface
+      - ./torch_cache:/root/.cache/torch
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+    restart: unless-stopped
+    
+
+volumes:
+  postgres_data:
