@@ -443,7 +443,7 @@ async def upload_file(
         # Generate file_id immediately
         file_id = str(uuid.uuid4())
         
-        # Create DB record FIRST with UPLOADING status so user can see it immediately
+        # Create DB record FIRST with QUEUED status so user can see it immediately
         loop = asyncio.get_event_loop()
         with ThreadPoolExecutor() as pool:
             db_file = await loop.run_in_executor(
@@ -520,14 +520,14 @@ async def upload_file(
 
 # Helper functions for thread pool execution
 def _create_uploading_file_record(db: Session, file_id: str, filename: str, project_id: int) -> File:
-    """Create file record with UPLOADING status (for thread pool execution)."""
+    """Create file record with QUEUED status (for thread pool execution)."""
     db_file = File(
         file_id=file_id,
         project_id=project_id,
         original_filename=filename,
         file_path="",  # Will be updated after upload
         size=0,  # Will be updated after upload
-        status=FileStatus.UPLOADING
+        status=FileStatus.QUEUED
     )
     db.add(db_file)
     db.commit()
@@ -1807,7 +1807,7 @@ async def upload_audio(
         import uuid
         file_id = str(uuid.uuid4())
         
-        # Create DB record FIRST with UPLOADING status
+        # Create DB record FIRST with QUEUED status
         loop = asyncio.get_event_loop()
         with ThreadPoolExecutor() as pool:
             db_file = await loop.run_in_executor(

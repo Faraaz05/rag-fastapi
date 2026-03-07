@@ -95,7 +95,5 @@ services:
       - ./model_cache:/root/.cache/huggingface
       - ./torch_cache:/root/.cache/torch
 
-    
-
 volumes:
   postgres_data:
