@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     
     # ChromaDB Settings
     CHROMA_HOST: str = "chromadb"
-    CHROMA_PORT: int = 8001
+    CHROMA_PORT: int = 8000
     CHROMA_DB_PATH: str = "./unified_chroma_db"
     
     # AI API Keys (optional for basic functionality)

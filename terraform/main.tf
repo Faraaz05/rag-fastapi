@@ -1132,11 +1132,11 @@ resource "aws_ecs_task_definition" "fastapi" {
           value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}"
         },
         {
-          name  = "CHROMADB_HOST"
+          name  = "CHROMA_HOST"
           value = "chromadb.${aws_service_discovery_private_dns_namespace.main.name}"  
         },  
         {
-          name  = "CHROMADB_PORT"
+          name  = "CHROMA_PORT"
           value = tostring(var.chromadb_container_port)
         },
         {
