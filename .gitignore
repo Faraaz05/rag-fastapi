@@ -43,7 +43,6 @@ test.db
 data/
 data/raw/
 data/processed/
-docs/
 chroma_data/
 redis_data/
 

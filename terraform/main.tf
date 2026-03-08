@@ -2,6 +2,11 @@ provider "aws" {
   region = var.aws_region
 }
 
+provider "aws" {
+  alias  = "us-east-1"
+  region = "us-east-1"
+}
+
 # --------------------
 # S3 Config
 # --------------------
@@ -1722,6 +1727,14 @@ resource "aws_cloudfront_distribution" "frontend" {
   default_root_object = "index.html"
   price_class         = "PriceClass_100"  # Use only North America and Europe (cheapest)
 
+  aliases = [var.frontend_domain]
+
+  viewer_certificate {
+    acm_certificate_arn      = aws_acm_certificate_validation.frontend.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
+  }
+
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
     origin_id                = "S3-${aws_s3_bucket.frontend.id}"
@@ -1758,10 +1771,6 @@ resource "aws_cloudfront_distribution" "frontend" {
     geo_restriction {
       restriction_type = "none"
     }
-  }
-
-  viewer_certificate {
-    cloudfront_default_certificate = true
   }
 
   tags = {
@@ -1999,4 +2008,58 @@ resource "aws_cloudfront_distribution" "api_proxy" {
 output "api_proxy_url" {
   value       = "https://${aws_cloudfront_distribution.api_proxy.domain_name}"
   description = "CloudFront HTTPS API endpoint"
+}
+
+# ACM Certificate for frontend domain (must be in us-east-1 for CloudFront)
+resource "aws_acm_certificate" "frontend" {
+  provider          = aws.us-east-1
+  domain_name       = var.frontend_domain
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name    = "${var.project_name}-frontend-cert"
+    Project = var.project_name
+  }
+}
+
+# DNS validation records
+resource "aws_route53_record" "frontend_cert_validation" {
+  for_each = {
+    for dvo in aws_acm_certificate.frontend.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  allow_overwrite = true
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = var.route53_zone_id
+}
+
+# Wait for certificate validation
+resource "aws_acm_certificate_validation" "frontend" {
+  provider                = aws.us-east-1
+  certificate_arn         = aws_acm_certificate.frontend.arn
+  validation_record_fqdns = [for record in aws_route53_record.frontend_cert_validation : record.fqdn]
+}
+
+# Route 53 A record pointing to CloudFront
+resource "aws_route53_record" "frontend" {
+  zone_id = var.route53_zone_id
+  name    = var.frontend_domain
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.frontend.domain_name
+    zone_id                = aws_cloudfront_distribution.frontend.hosted_zone_id
+    evaluate_target_health = false
+  }
 }

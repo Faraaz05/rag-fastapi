@@ -234,3 +234,14 @@ variable "public_subnet_cidr_2" {
   type        = string
   default     = "10.0.3.0/24"
 }
+
+variable "frontend_domain" {
+  description = "Custom domain for frontend (e.g., vector-trace.faraaz-bhojawala.me)"
+  type        = string
+  default     = "vector-trace.faraaz-bhojawala.me"
+}
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID for your domain"
+  type        = string
+}
