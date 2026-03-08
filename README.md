@@ -2,6 +2,17 @@
 
 A production-grade Retrieval-Augmented Generation (RAG) system built with FastAPI, featuring multi-tenant architecture, hybrid document processing (GPU-accelerated PDF partitioning and audio transcription), and cloud-native deployment on AWS.
 
+## Project Repositories
+
+This project consists of multiple repositories:
+
+- **Backend API** (this repository): FastAPI server, database models, RAG pipeline
+- **Frontend**: [Next.js Web Application](https://github.com/Faraaz05/RAG-FRONTEND)
+- **PDF Worker**: [GPU-Accelerated Document Processing](https://github.com/Faraaz05/RAG-GPU-IMAGE)
+- **Audio Worker**: [GPU-Accelerated Audio Transcription](https://github.com/Faraaz05/RAG-AUDIO-IMAGE)
+
+---
+
 ## Project Highlights
 
 - **Multi-Tenant RAG Pipeline**: Isolated vector databases per project with unified query engine
@@ -742,13 +753,13 @@ See frontend repository for Next.js development setup.
 
 ## Contact
 
-**Project Maintainer**: [Your Name]
+**Project Maintainer**: [Faraaz-Bhojawala]
 
-**Email**: [your.email@example.com]
+**Email**: [bhojawalafaraaz@gmail.com]
 
-**LinkedIn**: [https://linkedin.com/in/your-profile](https://linkedin.com/in/your-profile)
+**LinkedIn**: [https://www.linkedin.com/in/faraaz-bhojawala/](https://www.linkedin.com/in/faraaz-bhojawala/)
 
-**GitHub**: [https://github.com/your-username](https://github.com/your-username)
+**GitHub**: [https://github.com/Faraaz05](https://github.com/Faraaz05)
 
 ---
 
@@ -763,5 +774,3 @@ See frontend repository for Next.js development setup.
 - **Terraform**: Infrastructure as code
 
 ---
-
-**Last Updated**: March 8, 2026
